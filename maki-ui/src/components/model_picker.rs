@@ -223,8 +223,9 @@ impl Overlay for ModelPicker {
 
 fn parse_model_entry(spec: &str) -> Option<ModelEntry> {
     let (provider_str, model_id) = spec.split_once('/')?;
+    let provider_kind = provider_str.parse::<ProviderKind>().ok();
 
-    let provider_display = if let Ok(kind) = provider_str.parse::<ProviderKind>() {
+    let provider_display = if let Some(kind) = provider_kind {
         kind.display_name().to_string()
     } else if let Some(name) = dynamic::display_name(provider_str) {
         name.to_string()
@@ -233,6 +234,11 @@ fn parse_model_entry(spec: &str) -> Option<ModelEntry> {
         config.get(provider_str)?;
         maki_config::providers::resolve_display_name(provider_str, config.get(provider_str))
     };
+
+    let id = provider_kind
+        .map(|kind| kind.display_model_id(model_id))
+        .unwrap_or(model_id)
+        .to_string();
 
     let map = model_registry::model_registry().read().unwrap();
     let override_tiers: Vec<ModelTier> = [
@@ -252,7 +258,7 @@ fn parse_model_entry(spec: &str) -> Option<ModelEntry> {
     });
     Some(ModelEntry {
         spec: spec.to_string(),
-        id: model_id.to_string(),
+        id,
         provider_display,
         suffix: None,
         tier,
@@ -371,6 +377,24 @@ mod tests {
             matches!(action, ModelPickerAction::Select(ref s) if s == "anthropic/claude-opus-4-6-20260101"),
             "after async model arrival, current model should still be selected"
         );
+    }
+
+    #[test]
+    fn parse_model_entry_zen_strips_subprovider_prefix() {
+        let entry = parse_model_entry("opencode-zen/opencode/claude-sonnet-4-5").unwrap();
+        assert_eq!(entry.id, "claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn parse_model_entry_zen_keeps_third_party_vendor_prefix() {
+        let entry = parse_model_entry("opencode-zen/nvidia/openai/gpt-oss-120b").unwrap();
+        assert_eq!(entry.id, "nvidia/openai/gpt-oss-120b");
+    }
+
+    #[test]
+    fn parse_model_entry_go_bare_id() {
+        let entry = parse_model_entry("opencode-go/deepseek-v4-flash").unwrap();
+        assert_eq!(entry.id, "deepseek-v4-flash");
     }
 
     #[test]

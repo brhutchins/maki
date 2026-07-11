@@ -197,7 +197,8 @@ pub fn models_for_provider(provider: ProviderKind) -> &'static [ModelEntry] {
         ProviderKind::TensorX => tensorx::models(),
         ProviderKind::DeepSeek => deepseek::models(),
         ProviderKind::OpenRouter => openrouter::models(),
-        ProviderKind::Opencode => &[],
+        ProviderKind::OpencodeZen => &[],
+        ProviderKind::OpencodeGo => &[],
     }
 }
 
@@ -236,10 +237,11 @@ impl Model {
     /// When no static entry matches (a freshly released model the table has not
     /// caught up to yet), fall back to the provider defaults so it still resolves.
     fn from_base(provider: ProviderKind, model_id: &str, dynamic_slug: Option<&str>) -> Self {
-        let static_entry = lookup_entry(models_for_provider(provider), model_id).ok();
+        let normalized_id = provider.normalize_model_id(model_id);
+        let static_entry = lookup_entry(models_for_provider(provider), &normalized_id).ok();
         let spec = match dynamic_slug {
-            Some(slug) => format!("{slug}/{model_id}"),
-            None => format!("{provider}/{model_id}"),
+            Some(slug) => format!("{slug}/{normalized_id}"),
+            None => format!("{provider}/{normalized_id}"),
         };
         let tier = crate::model_registry::model_registry()
             .read()
@@ -250,11 +252,11 @@ impl Model {
                 e.family,
                 e.pricing.clone(),
                 Some(e.max_output_tokens),
-                anthropic::shared::long_context_window(model_id).unwrap_or(e.context_window),
+                anthropic::shared::long_context_window(&normalized_id).unwrap_or(e.context_window),
             ),
             None => {
                 let guard = crate::model_registry::model_registry().read().unwrap();
-                let discovered = guard.discovered(provider, model_id);
+                let discovered = guard.discovered(provider, &normalized_id);
                 (
                     provider.family(),
                     discovered
@@ -270,7 +272,7 @@ impl Model {
             }
         };
         Self {
-            id: model_id.to_string(),
+            id: normalized_id,
             provider,
             dynamic_slug: dynamic_slug.map(str::to_string),
             tier,
@@ -603,20 +605,62 @@ mod tests {
 
     #[test]
     fn opencode_from_spec_parses_four_levels() {
-        let spec = "opencode/nvidia/openai/gpt-oss-120b";
+        let spec = "opencode-zen/nvidia/openai/gpt-oss-120b";
         let model = Model::from_spec(spec).unwrap();
-        assert_eq!(model.provider, ProviderKind::Opencode);
+        assert_eq!(model.provider, ProviderKind::OpencodeZen);
         assert_eq!(model.id, "nvidia/openai/gpt-oss-120b");
         assert_eq!(model.spec(), spec);
     }
 
     #[test]
     fn opencode_from_spec_parses_three_levels() {
-        let spec = "opencode/opencode/big-pickle";
+        let spec = "opencode-zen/opencode/big-pickle";
         let model = Model::from_spec(spec).unwrap();
-        assert_eq!(model.provider, ProviderKind::Opencode);
+        assert_eq!(model.provider, ProviderKind::OpencodeZen);
         assert_eq!(model.id, "opencode/big-pickle");
         assert_eq!(model.spec(), spec);
+    }
+
+    #[test]
+    fn opencode_go_from_spec_parses_two_levels() {
+        let spec = "opencode-go/llama-4-maverick";
+        let model = Model::from_spec(spec).unwrap();
+        assert_eq!(model.provider, ProviderKind::OpencodeGo);
+        assert_eq!(model.id, "llama-4-maverick");
+        assert_eq!(model.spec(), spec);
+    }
+
+    #[test]
+    fn opencode_zen_default_uses_prefixed_id() {
+        let spec = "opencode-zen/opencode/claude-sonnet-4-5";
+        let model = Model::from_spec(spec).unwrap();
+        assert_eq!(model.provider, ProviderKind::OpencodeZen);
+        assert_eq!(model.id, "opencode/claude-sonnet-4-5");
+        assert_eq!(model.spec(), spec);
+    }
+
+    #[test]
+    fn opencode_zen_legacy_bare_id_normalized() {
+        let model = Model::from_spec("opencode-zen/claude-sonnet-4-5").unwrap();
+        assert_eq!(model.provider, ProviderKind::OpencodeZen);
+        assert_eq!(model.id, "opencode/claude-sonnet-4-5");
+        assert_eq!(model.spec(), "opencode-zen/opencode/claude-sonnet-4-5");
+    }
+
+    #[test]
+    fn opencode_go_legacy_double_prefix_normalized() {
+        let model = Model::from_spec("opencode-go/opencode-go/deepseek-v4-flash").unwrap();
+        assert_eq!(model.provider, ProviderKind::OpencodeGo);
+        assert_eq!(model.id, "deepseek-v4-flash");
+        assert_eq!(model.spec(), "opencode-go/deepseek-v4-flash");
+    }
+
+    #[test]
+    fn opencode_go_id_unchanged() {
+        let model = Model::from_spec("opencode-go/deepseek-v4-flash").unwrap();
+        assert_eq!(model.provider, ProviderKind::OpencodeGo);
+        assert_eq!(model.id, "deepseek-v4-flash");
+        assert_eq!(model.spec(), "opencode-go/deepseek-v4-flash");
     }
 
     #[test]
@@ -793,5 +837,135 @@ mod tests {
         assert_eq!(model.context_window, expected_window);
         // max_output_tokens falls back to provider default since not discovered
         assert_eq!(model.max_output_tokens, provider.fallback_max_output());
+    }
+
+    #[test]
+    fn zen_thinking_resolved_from_eager_registry() {
+        use crate::model_registry::model_registry;
+
+        let model_id = "opencode/claude-sonnet-4-5";
+        // Seed registry with catalog truth for thinking
+        {
+            let mut reg = model_registry().write().unwrap();
+            reg.set_known_models(
+                ProviderKind::OpencodeZen,
+                vec![ModelInfo {
+                    id: model_id.to_string(),
+                    context_window: Some(200_000),
+                    max_output_tokens: Some(64_000),
+                    pricing: None,
+                    supports_thinking: Some(true),
+                    supports_vision: None,
+                    provider_info: None,
+                }],
+            );
+        }
+
+        let model = Model::from_base(ProviderKind::OpencodeZen, model_id, None);
+        assert!(model.supports_thinking());
+    }
+
+    #[test]
+    fn zen_thinking_false_for_non_reasoning_model() {
+        use crate::model_registry::model_registry;
+
+        let model_id = "opencode/claude-haiku-4-5";
+        {
+            let mut reg = model_registry().write().unwrap();
+            reg.set_known_models(
+                ProviderKind::OpencodeZen,
+                vec![ModelInfo {
+                    id: model_id.to_string(),
+                    context_window: Some(200_000),
+                    max_output_tokens: Some(8_192),
+                    pricing: None,
+                    supports_thinking: Some(false),
+                    supports_vision: None,
+                    provider_info: None,
+                }],
+            );
+        }
+
+        let model = Model::from_base(ProviderKind::OpencodeZen, model_id, None);
+        assert!(!model.supports_thinking());
+    }
+
+    #[test]
+    fn zen_vision_resolved_from_eager_registry() {
+        use crate::model_registry::model_registry;
+
+        let model_id = "opencode/claude-sonnet-4-5";
+        {
+            let mut reg = model_registry().write().unwrap();
+            reg.set_known_models(
+                ProviderKind::OpencodeZen,
+                vec![ModelInfo {
+                    id: model_id.to_string(),
+                    context_window: Some(200_000),
+                    max_output_tokens: Some(64_000),
+                    pricing: None,
+                    supports_thinking: None,
+                    supports_vision: Some(true),
+                    provider_info: None,
+                }],
+            );
+        }
+
+        let model = Model::from_base(ProviderKind::OpencodeZen, model_id, None);
+        assert!(model.supports_vision());
+    }
+
+    #[test]
+    fn zen_vision_false_for_non_vision_model() {
+        use crate::model_registry::model_registry;
+
+        let model_id = "opencode/deepseek-r1";
+        {
+            let mut reg = model_registry().write().unwrap();
+            reg.set_known_models(
+                ProviderKind::OpencodeZen,
+                vec![ModelInfo {
+                    id: model_id.to_string(),
+                    context_window: Some(128_000),
+                    max_output_tokens: Some(64_000),
+                    pricing: None,
+                    supports_thinking: None,
+                    supports_vision: Some(false),
+                    provider_info: None,
+                }],
+            );
+        }
+
+        let model = Model::from_base(ProviderKind::OpencodeZen, model_id, None);
+        assert!(!model.supports_vision());
+    }
+
+    #[test]
+    fn zen_cold_start_resolution_with_eager_registry() {
+        use crate::model_registry::model_registry;
+
+        let model_id = "opencode/claude-opus-4-5";
+        {
+            let mut reg = model_registry().write().unwrap();
+            reg.set_known_models(
+                ProviderKind::OpencodeZen,
+                vec![ModelInfo {
+                    id: model_id.to_string(),
+                    context_window: Some(200_000),
+                    max_output_tokens: Some(32_000),
+                    pricing: None,
+                    supports_thinking: Some(true),
+                    supports_vision: Some(true),
+                    provider_info: None,
+                }],
+            );
+        }
+
+        // Before any async fetch_all_models, supports_thinking/vision
+        // resolve from the eagerly populated registry (tier 2).
+        let model = Model::from_spec(&format!("opencode-zen/{model_id}")).unwrap();
+        assert_eq!(model.id, model_id);
+        assert!(model.supports_thinking());
+        assert!(model.supports_vision());
     }
 }

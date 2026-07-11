@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use flume::Sender;
 use serde_json::Value;
-use strum::{Display, EnumIter, EnumString, IntoEnumIterator};
+use strum::{Display, EnumIter, IntoEnumIterator};
 use tracing::{debug, warn};
 
 use maki_storage::id::SessionRef;
@@ -19,14 +19,14 @@ use crate::providers::google::Google;
 use crate::providers::local::{LLAMACPP, LocalEndpoint, OLLAMA};
 use crate::providers::mistral::Mistral;
 use crate::providers::openai::OpenAi;
-use crate::providers::opencode::Opencode;
+use crate::providers::opencode::{Backend, Opencode};
 use crate::providers::openrouter::OpenRouter;
 use crate::providers::synthetic::Synthetic;
 use crate::providers::tensorx::TensorX;
 use crate::providers::zai::Zai;
 use crate::{AgentError, Message, ProviderEvent, ProviderUsage, RequestOptions, StreamResponse};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumString, EnumIter)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Display, EnumIter)]
 #[strum(serialize_all = "kebab-case")]
 pub enum ProviderKind {
     Anthropic,
@@ -45,8 +45,42 @@ pub enum ProviderKind {
     Synthetic,
     #[strum(serialize = "tensorx")]
     TensorX,
-    #[strum(serialize = "opencode")]
-    Opencode,
+    OpencodeZen,
+    OpencodeGo,
+}
+
+// Manual `FromStr` impl while we maintain the "opencode" ->
+// `ProviderKind::OpencodeZen` compatibility shim. Once that's removed, we can
+// derive `EnumStr` on `ProviderKind`.
+impl std::str::FromStr for ProviderKind {
+    type Err = &'static str;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "anthropic" => Ok(Self::Anthropic),
+            "openai" => Ok(Self::OpenAi),
+            "google" => Ok(Self::Google),
+            "copilot" => Ok(Self::Copilot),
+            "ollama" => Ok(Self::Ollama),
+            "llama-cpp" => Ok(Self::LlamaCpp),
+            "mistral" => Ok(Self::Mistral),
+            "zai" => Ok(Self::Zai),
+            "deepseek" => Ok(Self::DeepSeek),
+            "openrouter" => Ok(Self::OpenRouter),
+            "synthetic" => Ok(Self::Synthetic),
+            "tensorx" => Ok(Self::TensorX),
+            "opencode-zen" => Ok(Self::OpencodeZen),
+            "opencode-go" => Ok(Self::OpencodeGo),
+            "opencode" => {
+                warn!(
+                    slug = "opencode",
+                    replacement = "opencode-zen",
+                    "deprecated provider slug; update your config to use 'opencode-zen'"
+                );
+                Ok(Self::OpencodeZen)
+            }
+            _ => Err("unknown provider kind"),
+        }
+    }
 }
 
 impl ProviderKind {
@@ -64,7 +98,8 @@ impl ProviderKind {
             Self::OpenRouter => "OpenRouter",
             Self::Synthetic => "Synthetic",
             Self::TensorX => "TensorX",
-            Self::Opencode => "Opencode",
+            Self::OpencodeZen => "OpencodeZen",
+            Self::OpencodeGo => "OpencodeGo",
         }
     }
 
@@ -82,7 +117,8 @@ impl ProviderKind {
             Self::OpenRouter => "OPENROUTER_API_KEY",
             Self::Synthetic => "SYNTHETIC_API_KEY",
             Self::TensorX => "TENSORX_API_KEY",
-            Self::Opencode => "OPENCODE_API_KEY",
+            Self::OpencodeZen => "OPENCODE_API_KEY",
+            Self::OpencodeGo => "OPENCODE_API_KEY",
         }
     }
 
@@ -102,7 +138,8 @@ impl ProviderKind {
             Self::OpenRouter => "https://openrouter.ai/api/v1",
             Self::Synthetic => "https://api.synthetic.new/openai/v1",
             Self::TensorX => "https://api.tensorx.ai/v1",
-            Self::Opencode => "https://opencode.ai/zen/v1",
+            Self::OpencodeZen => "https://opencode.ai/zen/v1",
+            Self::OpencodeGo => "https://opencode.ai/zen/go/v1",
         }
     }
 
@@ -118,7 +155,8 @@ impl ProviderKind {
                 | Self::OpenRouter
                 | Self::LlamaCpp
                 | Self::TensorX
-                | Self::Opencode
+                | Self::OpencodeZen
+                | Self::OpencodeGo
         )
     }
 
@@ -143,9 +181,12 @@ impl ProviderKind {
             Self::OpenRouter => {
                 Some("300+ models from all providers, prompt caching, provider routing")
             }
-            Self::Opencode => Some(
+            Self::OpencodeZen => Some(
                 "Dynamically discovered models via [models.dev](https://models.dev/) + all the models provided by Opencode Zen API",
             ),
+            Self::OpencodeGo => {
+                Some("Dynamically discovered models via [models.dev](https://models.dev/)")
+            }
             _ => None,
         }
     }
@@ -164,7 +205,8 @@ impl ProviderKind {
             Self::OpenRouter => ModelFamily::Generic,
             Self::Synthetic => ModelFamily::Synthetic,
             Self::TensorX => ModelFamily::Generic,
-            Self::Opencode => ModelFamily::Generic,
+            Self::OpencodeZen => ModelFamily::Generic,
+            Self::OpencodeGo => ModelFamily::Generic,
         }
     }
 
@@ -178,7 +220,8 @@ impl ProviderKind {
                 | Self::OpenRouter
                 | Self::TensorX
                 | Self::Mistral
-                | Self::Opencode
+                | Self::OpencodeZen
+                | Self::OpencodeGo
         )
     }
 
@@ -201,7 +244,8 @@ impl ProviderKind {
             Self::OpenRouter => Some(128_000),
             Self::Synthetic => Some(32_000),
             Self::TensorX => None,
-            Self::Opencode => Some(128_000),
+            Self::OpencodeZen => Some(128_000),
+            Self::OpencodeGo => Some(128_000),
         }
     }
 
@@ -219,7 +263,8 @@ impl ProviderKind {
             Self::OpenRouter => 200_000,
             Self::Synthetic => 128_000,
             Self::TensorX => 200_000,
-            Self::Opencode => 256_000,
+            Self::OpencodeZen => 256_000,
+            Self::OpencodeGo => 256_000,
         }
     }
 
@@ -243,12 +288,38 @@ impl ProviderKind {
             Self::OpenRouter => Ok(Box::new(OpenRouter::new(timeouts)?)),
             Self::Synthetic => Ok(Box::new(Synthetic::new(timeouts)?)),
             Self::TensorX => Ok(Box::new(TensorX::new(timeouts)?)),
-            Self::Opencode => Ok(Box::new(Opencode::new(timeouts)?)),
+            Self::OpencodeZen => Ok(Box::new(Opencode::zen(timeouts)?)),
+            Self::OpencodeGo => Ok(Box::new(Opencode::go(timeouts)?)),
+        }
+    }
+
+    /// Canonicalize a model id before registry lookups and spec rendering
+    /// (legacy opencode id shapes); most providers use the id unchanged.
+    pub fn normalize_model_id(self, model_id: &str) -> String {
+        match self {
+            Self::OpencodeZen => Backend::Zen.normalize_model_id(model_id),
+            Self::OpencodeGo => Backend::Go.normalize_model_id(model_id),
+            _ => model_id.to_string(),
+        }
+    }
+
+    /// Id form shown in pickers: opencode drops the redundant default
+    /// sub-provider prefix; other providers use the id unchanged.
+    pub fn display_model_id(self, model_id: &str) -> &str {
+        match self {
+            Self::OpencodeZen => Backend::Zen.display_model_id(model_id),
+            _ => model_id,
         }
     }
 
     pub fn is_available(self) -> bool {
-        self.create(Timeouts::default()).is_ok()
+        match self {
+            // Opencode construction cannot fail and has global side effects
+            // (blocking catalog build, registry seeding); an availability
+            // probe must not trigger them.
+            Self::OpencodeZen | Self::OpencodeGo => true,
+            _ => self.create(Timeouts::default()).is_ok(),
+        }
     }
 }
 
@@ -520,5 +591,28 @@ pub async fn fetch_all_models(
     }
     if let Some(done) = on_done {
         done();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    const UNKNOWN_PROVIDER_ERR: &str = "unknown provider kind";
+
+    #[test_case("opencode", ProviderKind::OpencodeZen ; "from_str_opencode_deprecated")]
+    #[test_case("opencode-zen", ProviderKind::OpencodeZen ; "from_str_opencode_zen")]
+    #[test_case("opencode-go", ProviderKind::OpencodeGo ; "from_str_opencode_go")]
+    fn from_str_ok(slug: &str, expected: ProviderKind) {
+        assert_eq!(slug.parse::<ProviderKind>().unwrap(), expected);
+    }
+
+    #[test_case("nonexistent" ; "from_str_unknown")]
+    fn from_str_err(slug: &str) {
+        assert_eq!(
+            slug.parse::<ProviderKind>().unwrap_err(),
+            UNKNOWN_PROVIDER_ERR
+        );
     }
 }

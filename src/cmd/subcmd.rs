@@ -25,6 +25,19 @@ use maki_storage::auth::{
 use maki_storage::model::persist_model;
 
 pub fn auth_login(provider: Option<&str>, storage: &StateDir) -> Result<()> {
+    let provider = provider.map(|slug| {
+        if slug == "opencode" {
+            tracing::warn!(
+                slug,
+                replacement = "opencode-zen",
+                "deprecated provider slug; update your config to use 'opencode-zen'"
+            );
+            "opencode-zen"
+        } else {
+            slug
+        }
+    });
+
     match provider {
         Some("openai") => openai_auth::login(storage)?,
         Some("copilot") => copilot_auth::login(storage)?,

@@ -640,7 +640,10 @@ impl LoginPicker {
             } => {
                 self.step = Step::Done { message };
                 if let Some(spec) = model_spec {
-                    LoginPickerAction::Authenticated { model_spec: spec }
+                    LoginPickerAction::Authenticated {
+                        model_spec: spec,
+                        slug,
+                    }
                 } else {
                     LoginPickerAction::Configured { slug }
                 }
@@ -797,6 +800,6 @@ fn input_line_with_cursor(input: &TextBuffer) -> Line<'static> {
 pub enum LoginPickerAction {
     Consumed,
     Close,
-    Authenticated { model_spec: String },
+    Authenticated { model_spec: String, slug: String },
     Configured { slug: String },
 }
