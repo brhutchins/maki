@@ -209,7 +209,7 @@ pub fn migrate_tier_overrides(state_dir: &StateDir) {
     for (tier, spec) in &guard.overrides {
         if let Some(rest) = spec.strip_prefix("opencode-zen/")
             && let Some((maybe_slug, _)) = rest.split_once('/')
-            && maybe_slug != crate::providers::opencode::ZEN_CATALOG_KEY
+            && maybe_slug != crate::providers::catalog::data::ZEN_CATALOG_KEY
         {
             rewritten.insert(*tier, rest.to_string());
             changed = true;

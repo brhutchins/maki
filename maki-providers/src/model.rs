@@ -386,7 +386,7 @@ impl Model {
         // normalize through ProviderKind::OpencodeZen.
         if let Some(rest) = spec.strip_prefix("opencode-zen/")
             && let Some((maybe_slug, _)) = rest.split_once('/')
-            && maybe_slug != crate::providers::opencode::ZEN_CATALOG_KEY
+            && maybe_slug != crate::providers::catalog::data::ZEN_CATALOG_KEY
             && let Ok(m) = Self::from_spec(rest)
         {
             return Ok(m);
@@ -413,7 +413,7 @@ impl Model {
         }
 
         // 4. Catalog provider slug
-        if crate::providers::opencode::registry::contains(provider_str) {
+        if crate::providers::catalog::registry::contains(provider_str) {
             let provider = ProviderKind::Catalog(Arc::from(provider_str));
             return Ok(Self::from_base(provider, model_id, None));
         }
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn opencode_from_spec_migrates_third_party_to_catalog() {
-        use crate::providers::opencode::registry::{CatalogProviderInfo, replace};
+        use crate::providers::catalog::registry::{CatalogProviderInfo, replace};
 
         let mut registry = std::collections::HashMap::new();
         registry.insert(

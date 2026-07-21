@@ -3,7 +3,7 @@ use std::sync::{OnceLock, RwLock};
 
 use tracing::debug;
 
-use super::catalog::Meta;
+use super::data::Meta;
 use crate::providers::ResolvedAuth;
 use crate::AgentError;
 

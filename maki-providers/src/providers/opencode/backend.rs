@@ -10,11 +10,12 @@ use std::sync::{Arc, Mutex};
 
 use tracing::debug;
 
-use super::catalog::{
-    self, ALLOWED_NPM, CatalogIndex, CatalogProvider, EndpointType, GO_PROVIDER_ID, Meta, ModelKey,
-    PUBLIC_KEY, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG,
+use crate::providers::catalog::data as cat_data;
+use crate::providers::catalog::data::{
+    CatalogIndex, CatalogProvider, EndpointType, Meta, ModelKey, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG,
 };
-use super::registry::{CatalogModelInfo, CatalogProviderInfo, self};
+use crate::providers::catalog::registry::{CatalogModelInfo, CatalogProviderInfo, self as cat_registry};
+use super::catalog::{ALLOWED_NPM, GO_PROVIDER_ID, PUBLIC_KEY};
 use crate::AgentError;
 use crate::model::{ModelInfo, ModelPricing};
 use crate::providers::ResolvedAuth;
@@ -196,7 +197,7 @@ fn admit_provider(provider: &CatalogProvider) -> bool {
     true
 }
 
-fn model_is_free(model: &catalog::CatalogModel) -> bool {
+fn model_is_free(model: &cat_data::CatalogModel) -> bool {
     let cost = model.cost.as_ref();
     cost.and_then(|c| c.input).unwrap_or(0.0) == 0.0
         && cost.and_then(|c| c.output).unwrap_or(0.0) == 0.0
@@ -257,7 +258,7 @@ fn build_zen_catalog(
             if !(has_key || is_opencode && is_free) {
                 continue;
             }
-            let meta = catalog::model_meta(model_data, provider_id, api_format);
+            let meta = cat_data::model_meta(model_data, provider_id, api_format);
             catalog
                 .entries
                 .insert((provider_id.clone(), model_id.clone()), meta);
@@ -276,7 +277,7 @@ fn build_zen_catalog(
         }
     }
 
-    registry::replace(registry);
+    cat_registry::replace(registry);
     catalog
 }
 
@@ -310,7 +311,7 @@ fn build_zen_registry(
             .filter(|(_, model_data)| enable_free_models || !model_is_free(model_data))
             .map(|(model_id, model_data)| CatalogModelInfo {
                 id: model_id.clone(),
-                meta: catalog::model_meta(model_data, provider_id, api_format),
+                meta: cat_data::model_meta(model_data, provider_id, api_format),
             })
             .collect();
 
@@ -367,7 +368,7 @@ fn build_go_catalog(index: CatalogIndex, keys: &HashMap<String, Option<String>>)
     let api_format = EndpointType::from_npm(&provider.npm);
     let mut count = 0u32;
     for (model_id, model_data) in &provider.models {
-        let meta = catalog::model_meta(model_data, GO_PROVIDER_ID, api_format);
+        let meta = cat_data::model_meta(model_data, GO_PROVIDER_ID, api_format);
         catalog
             .entries
             .insert((GO_PROVIDER_ID.to_string(), model_id.clone()), meta);
@@ -403,23 +404,23 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
         Backend::Go => false,
     };
 
-    if let Some(index) = catalog::load_cached_async().await {
+    if let Some(index) = cat_data::load_cached_async().await {
         debug!(backend = ?backend, "using cached catalog");
-        let keys = catalog::resolve_provider_keys(&index, &state_dir);
+            let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
         let catalog = backend.build_catalog(index, &keys, enable_free_models);
         crate::model_registry::migrate_tier_overrides(&state_dir);
         return catalog;
     }
 
-    let client = catalog::http_client(match backend {
+    let client = cat_data::http_client(match backend {
         Backend::Zen => "opencode-zen catalog",
         Backend::Go => "opencode-go catalog",
     });
 
-    match catalog::fetch_remote_async(&client).await {
+    match cat_data::fetch_remote_async(&client).await {
         Ok(index) => {
-            catalog::save_cached_async(&index).await;
-            let keys = catalog::resolve_provider_keys(&index, &state_dir);
+            cat_data::save_cached_async(&index).await;
+        let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
             let catalog = backend.build_catalog(index, &keys, enable_free_models);
             crate::model_registry::migrate_tier_overrides(&state_dir);
             catalog
@@ -443,9 +444,10 @@ fn warn_for(backend: Backend, err: &crate::AgentError) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::opencode::catalog::{
-        CatalogCost, CatalogLimits, CatalogModel, CatalogProvider, PUBLIC_KEY,
+    use crate::providers::catalog::data::{
+        CatalogCost, CatalogLimits, CatalogModel, CatalogProvider,
     };
+    use crate::providers::opencode::catalog::PUBLIC_KEY;
     use test_case::test_case;
 
     fn provider_with_models(

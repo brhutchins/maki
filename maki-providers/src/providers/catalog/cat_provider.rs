@@ -5,7 +5,7 @@ use flume::Sender;
 use isahc::HttpClient;
 use serde_json::Value;
 
-use super::EndpointType;
+use super::data::EndpointType;
 use super::registry::{CatalogProviderInfo, resolve_auth_for_catalog};
 use super::request;
 use crate::model::{Model, ModelInfo, ModelPricing};
@@ -161,7 +161,7 @@ impl Provider for CatalogProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::opencode::registry::CatalogProviderInfo;
+    use crate::providers::catalog::registry::CatalogProviderInfo;
 
     fn info_with_base_url(base_url: Option<&str>) -> CatalogProviderInfo {
         CatalogProviderInfo {

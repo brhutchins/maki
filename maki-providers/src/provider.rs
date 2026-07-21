@@ -146,7 +146,7 @@ impl ProviderKind {
             Self::OpencodeZen => "OpencodeZen".to_string(),
             Self::OpencodeGo => "OpencodeGo".to_string(),
             Self::Catalog(slug) => {
-                crate::providers::opencode::registry::get(slug)
+                crate::providers::catalog::registry::get(slug)
                     .map(|info| info.display_name)
                     .unwrap_or_else(|| slug.to_string())
             }
@@ -170,7 +170,7 @@ impl ProviderKind {
             Self::OpencodeZen => "OPENCODE_API_KEY".into(),
             Self::OpencodeGo => "OPENCODE_API_KEY".into(),
             Self::Catalog(slug) => {
-                crate::providers::opencode::registry::get(slug)
+                crate::providers::catalog::registry::get(slug)
                     .map(|info| info.env_keys.join(","))
                     .unwrap_or_default()
             }
@@ -194,7 +194,7 @@ impl ProviderKind {
             Self::OpencodeZen => "https://opencode.ai/zen/v1".into(),
             Self::OpencodeGo => "https://opencode.ai/zen/go/v1".into(),
             Self::Catalog(slug) => {
-                crate::providers::opencode::registry::get(slug)
+                crate::providers::catalog::registry::get(slug)
                     .and_then(|info| info.base_url)
                     .unwrap_or_default()
             }
@@ -238,7 +238,7 @@ impl ProviderKind {
             Self::OpencodeZen => Some("Dynamically discovered models via [models.dev](https://models.dev/) + all the models provided by Opencode Zen API".to_string()),
             Self::OpencodeGo => Some("Dynamically discovered models via [models.dev](https://models.dev/)".to_string()),
             Self::Catalog(slug) => {
-                Some(crate::providers::opencode::registry::get(slug)
+                Some(crate::providers::catalog::registry::get(slug)
                     .map(|info| info.features)
                     .unwrap_or_else(|| "Third-party provider".to_string()))
             }
@@ -351,12 +351,12 @@ impl ProviderKind {
             Self::OpencodeZen => Ok(Box::new(Opencode::zen(timeouts)?)),
             Self::OpencodeGo => Ok(Box::new(Opencode::go(timeouts)?)),
             Self::Catalog(slug) => {
-                let info = crate::providers::opencode::registry::get(slug)
+                let info = crate::providers::catalog::registry::get(slug)
                     .ok_or_else(|| AgentError::Config {
                         message: format!("unknown catalog provider '{slug}'"),
                     })?;
-                let auth = crate::providers::opencode::registry::resolve_auth_for_catalog(slug, &info.env_keys)?;
-                Ok(Box::new(crate::providers::opencode::cat_provider::CatalogProvider::new(
+                let auth = crate::providers::catalog::registry::resolve_auth_for_catalog(slug, &info.env_keys)?;
+                Ok(Box::new(crate::providers::catalog::cat_provider::CatalogProvider::new(
                     Arc::clone(slug), info, auth, timeouts,
                 )))
             }
@@ -546,7 +546,7 @@ pub fn available_model_specs() -> Vec<String> {
     // Catalog providers: use known_models seeded by Opencode::new_impl or fetch_all_models
     // instead of creating providers synchronously (which risks panicking via smol::block_on).
     let registry = crate::model_registry::model_registry().read().unwrap();
-    for slug in crate::providers::opencode::registry::all_slugs() {
+    for slug in crate::providers::catalog::registry::all_slugs() {
         let kind = ProviderKind::Catalog(Arc::from(slug));
         if let Some(models) = registry.discovered_models(&kind) {
             for m in models {
@@ -619,7 +619,7 @@ pub async fn fetch_all_models(
 
     // Spawn catalog provider fetches
     let config = maki_config::providers::ProvidersConfig::load();
-    for slug in crate::providers::opencode::registry::all_slugs() {
+    for slug in crate::providers::catalog::registry::all_slugs() {
         if dynamic::display_name(&slug).is_some()
             || config.get(&slug).is_some()
         {

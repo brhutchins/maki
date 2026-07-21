@@ -26,23 +26,15 @@ use isahc::HttpClient;
 use serde_json::Value;
 use tracing::warn;
 
-mod backend;
-mod catalog;
-pub(crate) mod cat_provider;
-mod provider_data;
-pub(crate) mod registry;
-mod request;
-
-pub(crate) use backend::Backend;
-pub use provider_data::ProviderData;
-
-use backend::Catalog;
-use catalog::maki_slug_for;
-
-pub(crate) use catalog::{EndpointType, ZEN_CATALOG_KEY};
-use request::{GO_CHAT, ZEN_CHAT};
+use crate::providers::catalog::data::{EndpointType, maki_slug_for};
+pub use crate::providers::catalog::provider_data::ProviderData;
+use crate::providers::catalog::registry;
+use crate::providers::catalog::request as cat_request;
 
 use maki_storage::id::SessionRef;
+
+use backend::Catalog;
+use request::{GO_CHAT, ZEN_CHAT};
 
 use crate::model::Model;
 use crate::model_registry::model_registry;
@@ -50,6 +42,12 @@ use crate::provider::{BoxFuture, Provider, ProviderKind};
 use crate::providers::openai_compat::OpenAiCompatProvider;
 use crate::providers::{ResolvedAuth, Timeouts, http_client};
 use crate::{AgentError, Message, ProviderEvent, RequestOptions, StreamResponse};
+
+mod backend;
+mod catalog;
+mod request;
+
+pub(crate) use backend::Backend;
 
 inventory::submit!(maki_config::providers::BuiltInProvider {
     slug: "opencode-zen",
@@ -318,8 +316,8 @@ impl Provider for Opencode {
             };
 
             match meta.api_format {
-                catalog::EndpointType::ChatCompletions => {
-                    request::chat_completions(
+                EndpointType::ChatCompletions => {
+                    cat_request::chat_completions(
                         &self.chat_compat,
                         &model,
                         messages,
@@ -331,8 +329,8 @@ impl Provider for Opencode {
                     )
                     .await
                 }
-                catalog::EndpointType::Messages => {
-                    request::anthropic_messages(
+                EndpointType::Messages => {
+                    cat_request::anthropic_messages(
                         &self.client,
                         self.stream_timeout,
                         &model,
@@ -373,7 +371,8 @@ impl Provider for Opencode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::opencode::catalog::{EndpointType, GO_PROVIDER_ID, Meta};
+    use crate::providers::catalog::data::{EndpointType, Meta};
+    use crate::providers::opencode::catalog::GO_PROVIDER_ID;
 
     const TEST_MODEL_ID: &str = "rebuild-test-model";
 

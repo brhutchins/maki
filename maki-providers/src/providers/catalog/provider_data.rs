@@ -1,6 +1,6 @@
 use maki_storage::StateDir;
 
-use super::catalog::{CatalogProvider, EndpointType, maki_slug_for};
+use super::data::{CatalogProvider, EndpointType, maki_slug_for};
 
 #[derive(Debug, Clone)]
 pub struct ProviderData {
