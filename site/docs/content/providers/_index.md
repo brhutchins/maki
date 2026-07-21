@@ -54,6 +54,7 @@ You can override the model with `ANTHROPIC_MODEL` and the endpoint with `ANTHROP
 
 - **Env var**: `OPENAI_API_KEY` (also supports OAuth device flow)
 - **API**: `https://api.openai.com/v1`
+- **Features**: ChatGPT, GPT-4, DALL-E, Whisper, and more
 
 | Tier | Models | Pricing (in/out per 1M tokens) | Context |
 |------|--------|-------------------------------|---------|
@@ -103,7 +104,7 @@ This provider talks the OpenAI-compatible `/v1` API, so it also works with llama
 
 - **Env var**: `LLAMA_CPP_API_KEY`
 - **API**: `http://localhost:8080/v1`
-- **Features**: Local or remote inference via LLAMA_CPP_HOST, set optional key via LLAMA_CPP_API_KEY
+- **Features**: Local or remote inference via LLAMA_CPP_HOST
 
 Connects to any OpenAI-compatible `/v1` endpoint. Point `LLAMA_CPP_HOST` to your server address (defaults to `http://localhost:8080`).
 
@@ -111,6 +112,7 @@ Connects to any OpenAI-compatible `/v1` endpoint. Point `LLAMA_CPP_HOST` to your
 
 - **Env var**: `MISTRAL_API_KEY`
 - **API**: `https://api.mistral.ai/v1`
+- **Features**: Le Chat and Le Chat Enterprise
 
 | Tier | Models | Pricing (in/out per 1M tokens) | Context |
 |------|--------|-------------------------------|---------|
@@ -126,6 +128,7 @@ Defaults: mistral-medium-latest (strong), mistral-small-latest (medium), ministr
 - **API endpoints**:
   - `https://api.z.ai/api/paas/v4`
   - `https://api.z.ai/api/coding/paas/v4`
+- **Features**: Zhipu AI GLM models
 
 | Tier | Models | Pricing (in/out per 1M tokens) | Context |
 |------|--------|-------------------------------|---------|
