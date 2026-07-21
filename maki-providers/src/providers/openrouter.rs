@@ -186,7 +186,7 @@ impl Provider for OpenRouter {
             let reasoning_info: Option<Arc<OpenRouterModelInfo>> = {
                 let guard = crate::model_registry::model_registry().read().unwrap();
                 guard
-                    .discovered(model.provider, &model.id)
+                    .discovered(&model.provider, &model.id)
                     .and_then(|d| d.provider_info.clone())
                     .map(|arc| {
                         Arc::downcast::<OpenRouterModelInfo>(arc).expect("wrong provider info type")

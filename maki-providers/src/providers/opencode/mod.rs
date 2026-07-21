@@ -28,7 +28,9 @@ use tracing::warn;
 
 mod backend;
 mod catalog;
+pub(crate) mod cat_provider;
 mod provider_data;
+pub(crate) mod registry;
 mod request;
 
 pub(crate) use backend::Backend;
@@ -36,6 +38,8 @@ pub use provider_data::ProviderData;
 
 use backend::Catalog;
 use catalog::maki_slug_for;
+
+pub(crate) use catalog::{EndpointType, ZEN_CATALOG_KEY};
 use request::{GO_CHAT, ZEN_CHAT};
 
 use maki_storage::id::SessionRef;
@@ -103,13 +107,14 @@ impl Opencode {
 
         let empty = slot.get().unwrap().read().unwrap().entries.is_empty();
         if empty && claim_rebuild(backend) {
+            let kind2 = kind.clone();
             warn!(
                 ?backend,
                 "opencode catalog is empty — triggering background rebuild"
             );
             smol::spawn(async move {
                 let catalog = backend::build_catalog_async(backend).await;
-                apply_rebuilt_catalog(backend, kind, catalog);
+                apply_rebuilt_catalog(backend, kind2, catalog);
             })
             .detach();
         }
@@ -248,6 +253,15 @@ pub fn catalog_provider(slug: &str) -> Option<ProviderData> {
         return Some(result);
     }
     None
+}
+
+pub fn catalog_provider_slugs() -> Vec<String> {
+    registry::all_slugs()
+}
+
+#[allow(dead_code)]
+pub(crate) fn catalog_provider_info(slug: &str) -> Option<registry::CatalogProviderInfo> {
+    registry::get(slug)
 }
 
 /// Swap in a rebuilt catalog and re-seed the discovered registry so
@@ -409,7 +423,7 @@ mod tests {
 
         let registry = model_registry().read().unwrap();
         let info = registry
-            .discovered(ProviderKind::OpencodeGo, TEST_MODEL_ID)
+            .discovered(&ProviderKind::OpencodeGo, TEST_MODEL_ID)
             .expect("rebuilt catalog should re-seed the registry");
         assert_eq!(info.supports_thinking, Some(true));
 

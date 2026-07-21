@@ -874,15 +874,16 @@ mod tests {
     }
 
     fn clamp_test_model(provider: crate::provider::ProviderKind) -> crate::model::Model {
+        let family = provider.family();
         crate::model::Model {
             id: "test-model".into(),
             provider,
             dynamic_slug: None,
             tier: crate::model::ModelTier::Medium,
-            family: provider.family(),
+            family,
             supports_tool_examples_override: None,
             supports_thinking_override: None,
-            supports_vision_override: Some(provider.family().supports_vision()),
+            supports_vision_override: Some(family.supports_vision()),
             pricing: crate::model::ModelPricing::default(),
             max_output_tokens: Some(8192),
             context_window: 200_000,

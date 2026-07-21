@@ -118,7 +118,7 @@ pub fn lookup_model(slug: &str, model_id: &str) -> Option<Model> {
         .unwrap_or_default();
     Some(Model {
         id: model_id.to_string(),
-        provider: kind,
+        provider: kind.clone(),
         dynamic_slug: Some(slug.to_string()),
         tier,
         family: kind.family(),

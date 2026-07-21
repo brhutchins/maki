@@ -220,6 +220,18 @@ impl LoginPicker {
         if let Some(catalog) = catalog_providers_if_available() {
             let state_dir = StateDir::resolve().ok();
             for cat in catalog {
+                // Skip entries that map to built-in provider slugs (e.g. opencode -> opencode-zen).
+                if providers::builtin_provider(&cat.slug).is_some() {
+                    continue;
+                }
+                // Skip if a configured custom provider already owns this slug.
+                if config.get(&cat.slug).is_some() {
+                    continue;
+                }
+                // Skip if a dynamic provider script owns this slug.
+                if maki_providers::dynamic::display_name(&cat.slug).is_some() {
+                    continue;
+                }
                 let has_key = state_dir
                     .as_ref()
                     .and_then(|s| cat.load_key_from_storage(s))
@@ -231,7 +243,7 @@ impl LoginPicker {
                     has_key,
                     has_env,
                     configured: false,
-                    section: Some("Providers from Models.dev"),
+                    section: None,
                 });
             }
         } else {
@@ -241,7 +253,7 @@ impl LoginPicker {
                 has_key: false,
                 has_env: false,
                 configured: false,
-                section: Some("Providers from Models.dev"),
+                section: Some("Models.dev"),
             });
         }
 

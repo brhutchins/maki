@@ -518,9 +518,13 @@ pub fn auth_status(storage: &StateDir) -> Result<()> {
     }
     // Catalog providers from models.dev
     let catalog_entries = catalog_providers();
-    if !catalog_entries.is_empty() {
+    let filtered: Vec<_> = catalog_entries
+        .iter()
+        .filter(|e| builtin_provider(&e.slug).is_none())
+        .collect();
+    if !filtered.is_empty() {
         println!("  \x1b[1mCatalog Providers (models.dev):\x1b[0m");
-        for entry in &catalog_entries {
+        for entry in &filtered {
             if let Some(creds) = load_provider_credentials(storage, &entry.slug) {
                 println!(
                     "  \x1b[32m✓\x1b[0m {:<14} {} (key: {})",

@@ -225,10 +225,12 @@ fn parse_model_entry(spec: &str) -> Option<ModelEntry> {
     let (provider_str, model_id) = spec.split_once('/')?;
     let provider_kind = provider_str.parse::<ProviderKind>().ok();
 
-    let provider_display = if let Some(kind) = provider_kind {
-        kind.display_name().to_string()
+    let provider_display = if let Some(kind) = provider_kind.as_ref() {
+        kind.display_name()
     } else if let Some(name) = dynamic::display_name(provider_str) {
         name.to_string()
+    } else if let Some(info) = maki_providers::catalog_provider(provider_str) {
+        info.display_name.clone()
     } else {
         let config = maki_config::providers::ProvidersConfig::load();
         config.get(provider_str)?;
@@ -236,6 +238,7 @@ fn parse_model_entry(spec: &str) -> Option<ModelEntry> {
     };
 
     let id = provider_kind
+        .as_ref()
         .map(|kind| kind.display_model_id(model_id))
         .unwrap_or(model_id)
         .to_string();

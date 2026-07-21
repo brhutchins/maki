@@ -14,6 +14,7 @@ use super::catalog::{
     self, ALLOWED_NPM, CatalogIndex, CatalogProvider, EndpointType, GO_PROVIDER_ID, Meta, ModelKey,
     PUBLIC_KEY, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG,
 };
+use super::registry::{CatalogModelInfo, CatalogProviderInfo, self};
 use crate::AgentError;
 use crate::model::{ModelInfo, ModelPricing};
 use crate::providers::ResolvedAuth;
@@ -149,6 +150,12 @@ impl Backend {
         let mut models: Vec<ModelInfo> = catalog
             .entries
             .iter()
+            .filter(|((provider, _), _)| match self {
+                // Zen catalog's all_models only returns first-party models;
+                // third-party models are listed by individual CatalogProvider instances.
+                Self::Zen => provider == ZEN_CATALOG_KEY,
+                Self::Go => true,
+            })
             .map(|((provider, model_id), meta)| {
                 let id = match self {
                     Self::Zen => format!("{provider}/{model_id}"),
@@ -201,6 +208,8 @@ fn build_zen_catalog(
     enable_free_models: bool,
 ) -> Catalog {
     let mut catalog = Catalog::empty();
+    let registry = build_zen_registry(&index, enable_free_models);
+
     for (provider_id, provider) in &index {
         // The Go provider has its own catalog; don't leak its models into Zen.
         if provider_id == GO_PROVIDER_ID {
@@ -221,6 +230,8 @@ fn build_zen_catalog(
             .insert(provider_id.clone(), provider.clone());
 
         let is_opencode = provider_id == ZEN_CATALOG_KEY;
+        let api_format = EndpointType::from_npm(&provider.npm);
+
         let key = keys.get(provider_id).and_then(|k| k.as_ref());
         let has_key = key.is_some();
         // Providers without a key are admitted only for the Zen catalog key,
@@ -235,7 +246,6 @@ fn build_zen_catalog(
         };
         let auth = provider.build_auth(api_key.clone(), EndpointType::ChatCompletions);
         let anthropic_auth = provider.build_auth(api_key, EndpointType::Messages);
-        let api_format = EndpointType::from_npm(&provider.npm);
 
         let mut count = 0u32;
         for (model_id, model_data) in &provider.models {
@@ -265,7 +275,73 @@ fn build_zen_catalog(
             );
         }
     }
+
+    registry::replace(registry);
     catalog
+}
+
+fn build_zen_registry(
+    index: &CatalogIndex,
+    enable_free_models: bool,
+) -> HashMap<String, CatalogProviderInfo> {
+    let mut registry = HashMap::new();
+
+    for (provider_id, provider) in index {
+        if provider_id == GO_PROVIDER_ID {
+            continue;
+        }
+        if provider_id != ZEN_CATALOG_KEY
+            && (BLOCKED_PROVIDERS.contains(&provider_id.as_str())
+                || maki_config::providers::builtin_provider(provider_id).is_some())
+        {
+            continue;
+        }
+        if !admit_provider(provider) {
+            continue;
+        }
+        if provider_id == ZEN_CATALOG_KEY {
+            continue;
+        }
+
+        let api_format = EndpointType::from_npm(&provider.npm);
+        let cat_models: Vec<CatalogModelInfo> = provider
+            .models
+            .iter()
+            .filter(|(_, model_data)| enable_free_models || !model_is_free(model_data))
+            .map(|(model_id, model_data)| CatalogModelInfo {
+                id: model_id.clone(),
+                meta: catalog::model_meta(model_data, provider_id, api_format),
+            })
+            .collect();
+
+        let has_thinking = cat_models.iter().any(|m| m.meta.supports_thinking);
+        let has_vision = cat_models.iter().any(|m| m.meta.vision);
+        let mut caps = Vec::new();
+        if has_thinking {
+            caps.push("thinking support");
+        }
+        if has_vision {
+            caps.push("vision support");
+        }
+        let features = if caps.is_empty() {
+            format!("{} models", provider.name)
+        } else {
+            format!("{} models with {}", provider.name, caps.join(", "))
+        };
+
+        registry.insert(
+            provider_id.clone(),
+            CatalogProviderInfo {
+                display_name: provider.name.clone(),
+                env_keys: provider.env.clone(),
+                base_url: provider.api.clone(),
+                features,
+                models: cat_models,
+            },
+        );
+    }
+
+    registry
 }
 
 fn build_go_catalog(index: CatalogIndex, keys: &HashMap<String, Option<String>>) -> Catalog {
@@ -330,7 +406,9 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
     if let Some(index) = catalog::load_cached_async().await {
         debug!(backend = ?backend, "using cached catalog");
         let keys = catalog::resolve_provider_keys(&index, &state_dir);
-        return backend.build_catalog(index, &keys, enable_free_models);
+        let catalog = backend.build_catalog(index, &keys, enable_free_models);
+        crate::model_registry::migrate_tier_overrides(&state_dir);
+        return catalog;
     }
 
     let client = catalog::http_client(match backend {
@@ -342,7 +420,9 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
         Ok(index) => {
             catalog::save_cached_async(&index).await;
             let keys = catalog::resolve_provider_keys(&index, &state_dir);
-            backend.build_catalog(index, &keys, enable_free_models)
+            let catalog = backend.build_catalog(index, &keys, enable_free_models);
+            crate::model_registry::migrate_tier_overrides(&state_dir);
+            catalog
         }
         Err(e) => {
             warn_for(backend, &e);

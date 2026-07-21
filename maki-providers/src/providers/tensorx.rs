@@ -94,7 +94,7 @@ impl Provider for TensorX {
             let (has_thinking, has_reasoning_effort) = {
                 let guard = crate::model_registry::model_registry().read().unwrap();
                 let info = guard
-                    .discovered(model.provider, &model.id)
+                    .discovered(&model.provider, &model.id)
                     .and_then(|d| d.provider_info.clone())
                     .map(|arc| {
                         Arc::downcast::<TensorXModelInfo>(arc).expect("wrong provider info type")

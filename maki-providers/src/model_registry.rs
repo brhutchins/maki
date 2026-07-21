@@ -24,6 +24,7 @@ use crate::provider::ProviderKind;
 const TIERS_FILE: &str = "model-tiers";
 
 static REGISTRY: OnceLock<RwLock<ModelRegistry>> = OnceLock::new();
+static TIER_MIGRATION_DONE: OnceLock<()> = OnceLock::new();
 
 pub fn model_registry() -> &'static RwLock<ModelRegistry> {
     REGISTRY.get_or_init(|| RwLock::new(ModelRegistry::default()))
@@ -32,6 +33,7 @@ pub fn model_registry() -> &'static RwLock<ModelRegistry> {
 pub fn load_from_storage(dir: &StateDir) {
     let overrides = read_overrides(dir.path().join(TIERS_FILE).as_path());
     model_registry().write().unwrap().set_overrides(overrides);
+    migrate_tier_overrides(dir);
 }
 
 pub fn set_and_persist(spec: String, tier: ModelTier, dir: &StateDir) {
@@ -87,21 +89,24 @@ impl ModelRegistry {
     }
 
     /// Lookup discovered metadata for a model by ID.
-    pub fn discovered(&self, provider: ProviderKind, model_id: &str) -> Option<&ModelInfo> {
+    pub fn discovered(&self, provider: &ProviderKind, model_id: &str) -> Option<&ModelInfo> {
         self.known_models
-            .get(&provider)?
+            .get(provider)?
             .iter()
             .find(|m| m.id == model_id)
+    }
+
+    /// Return all discovered models for a provider, if seeded.
+    pub fn discovered_models(&self, provider: &ProviderKind) -> Option<&[ModelInfo]> {
+        self.known_models.get(provider).map(Vec::as_slice)
     }
 
     pub fn tier_for(
         &self,
         spec: &str,
-        provider: ProviderKind,
+        provider: &ProviderKind,
         static_tier: Option<ModelTier>,
     ) -> ModelTier {
-        // A spec may hold several tiers; prefer the strongest agent tier,
-        // falling back to Compaction only when it is the sole assignment.
         let mut tiers = self
             .overrides
             .iter()
@@ -118,7 +123,7 @@ impl ModelRegistry {
             return t;
         }
         if let Some((_, model_id)) = spec.split_once('/')
-            && let Some(models) = self.known_models.get(&provider)
+            && let Some(models) = self.known_models.get(provider)
             && let Some(pos) = models.iter().position(|m| m.id == model_id)
         {
             return tier_for_position(pos);
@@ -126,7 +131,7 @@ impl ModelRegistry {
         ModelTier::Medium
     }
 
-    pub fn spec_for_tier(&self, provider: ProviderKind, tier: ModelTier) -> Option<String> {
+    pub fn spec_for_tier(&self, provider: &ProviderKind, tier: ModelTier) -> Option<String> {
         let prefix = format!("{provider}/");
         if let Some(spec) = self.overrides.get(&tier)
             && spec.starts_with(&prefix)
@@ -141,15 +146,15 @@ impl ModelRegistry {
         (!self.claimed_elsewhere(&candidate, tier)).then_some(candidate)
     }
 
-    fn static_candidate(&self, provider: ProviderKind, tier: ModelTier) -> Option<String> {
+    fn static_candidate(&self, provider: &ProviderKind, tier: ModelTier) -> Option<String> {
         models_for_provider(provider)
             .iter()
             .find(|e| e.default && e.tier == tier)
             .map(|e| format!("{provider}/{}", e.prefixes[0]))
     }
 
-    fn positional_candidate(&self, provider: ProviderKind, tier: ModelTier) -> Option<String> {
-        let models = self.known_models.get(&provider).filter(|m| !m.is_empty())?;
+    fn positional_candidate(&self, provider: &ProviderKind, tier: ModelTier) -> Option<String> {
+        let models = self.known_models.get(provider).filter(|m| !m.is_empty())?;
         let slot = match tier {
             ModelTier::Strong => 0,
             ModelTier::Medium => 1,
@@ -170,7 +175,7 @@ impl ModelRegistry {
         if let Some(spec) = self.overrides.get(&tier) {
             return Some(spec.clone());
         }
-        for &provider in self.known_models.keys() {
+        for provider in self.known_models.keys() {
             if let Some(spec) = self.spec_for_tier(provider, tier) {
                 return Some(spec);
             }
@@ -188,6 +193,36 @@ impl ModelRegistry {
             .collect();
         (!tiers.is_empty()).then(|| tiers.join("/"))
     }
+}
+
+/// Migrate old `opencode-zen/{slug}/{model_id}` tier override specs to the new
+/// `{slug}/{model_id}` format. First-party Zen specs (`opencode-zen/opencode/...`)
+/// are left untouched so they continue to resolve through `ProviderKind::OpencodeZen`.
+/// This does not require the catalog registry to be populated.
+pub fn migrate_tier_overrides(state_dir: &StateDir) {
+    if TIER_MIGRATION_DONE.get().is_some() {
+        return;
+    }
+    let mut guard = model_registry().write().unwrap();
+    let mut rewritten = guard.overrides.clone();
+    let mut changed = false;
+    for (tier, spec) in &guard.overrides {
+        if let Some(rest) = spec.strip_prefix("opencode-zen/")
+            && let Some((maybe_slug, _)) = rest.split_once('/')
+            && maybe_slug != crate::providers::opencode::ZEN_CATALOG_KEY
+        {
+            rewritten.insert(*tier, rest.to_string());
+            changed = true;
+        }
+    }
+    if changed {
+        write_overrides(
+            state_dir.path().join(TIERS_FILE).as_path(),
+            &rewritten,
+        );
+        guard.set_overrides(rewritten);
+    }
+    let _ = TIER_MIGRATION_DONE.set(());
 }
 
 fn tier_for_position(pos: usize) -> ModelTier {
@@ -257,7 +292,7 @@ mod tests {
         let mut reg = make_map(&[], &["pos0", "pos1", "pos2"]);
         reg.set("ollama/pos1".into(), ModelTier::Weak);
 
-        let t = |spec, static_tier| reg.tier_for(spec, ProviderKind::Ollama, static_tier);
+        let t = |spec, static_tier| reg.tier_for(spec, &ProviderKind::Ollama, static_tier);
 
         assert_eq!(t("ollama/pos1", Some(ModelTier::Strong)), ModelTier::Weak);
         assert_eq!(t("ollama/pos0", Some(ModelTier::Weak)), ModelTier::Weak);
@@ -275,7 +310,7 @@ mod tests {
         reg.set("ollama/multi".into(), ModelTier::Compaction);
         reg.set("ollama/compact-only".into(), ModelTier::Compaction);
 
-        let t = |spec| reg.tier_for(spec, ProviderKind::Ollama, None);
+        let t = |spec| reg.tier_for(spec, &ProviderKind::Ollama, None);
 
         assert_eq!(t("ollama/multi"), ModelTier::Strong);
         assert_eq!(t("ollama/compact-only"), ModelTier::Compaction);
@@ -287,7 +322,7 @@ mod tests {
             &[(ModelTier::Strong, "ollama/custom")],
             &["big", "mid", "small"],
         );
-        let s = |t| reg.spec_for_tier(ProviderKind::Ollama, t);
+        let s = |t| reg.spec_for_tier(&ProviderKind::Ollama, t);
 
         assert_eq!(s(ModelTier::Strong), Some("ollama/custom".into()));
         assert_eq!(s(ModelTier::Medium), Some("ollama/mid".into()));
@@ -295,13 +330,13 @@ mod tests {
 
         let scoped = make_map(&[(ModelTier::Strong, "openai/gpt-foo")], &[]);
         assert_eq!(
-            scoped.spec_for_tier(ProviderKind::Ollama, ModelTier::Strong),
+            scoped.spec_for_tier(&ProviderKind::Ollama, ModelTier::Strong),
             None
         );
 
         let conflict = make_map(&[(ModelTier::Weak, "ollama/big")], &["big", "mid", "small"]);
         assert_eq!(
-            conflict.spec_for_tier(ProviderKind::Ollama, ModelTier::Strong),
+            conflict.spec_for_tier(&ProviderKind::Ollama, ModelTier::Strong),
             None
         );
     }
@@ -355,11 +390,11 @@ mod tests {
                 },
             ],
         );
-        let info = reg.discovered(ProviderKind::LlamaCpp, "model-a").unwrap();
+        let info = reg.discovered(&ProviderKind::LlamaCpp, "model-a").unwrap();
         assert_eq!(info.id, "model-a");
         assert_eq!(info.context_window, Some(32_000));
-        assert!(reg.discovered(ProviderKind::LlamaCpp, "model-x").is_none());
-        assert!(reg.discovered(ProviderKind::Ollama, "model-a").is_none());
+        assert!(reg.discovered(&ProviderKind::LlamaCpp, "model-x").is_none());
+        assert!(reg.discovered(&ProviderKind::Ollama, "model-a").is_none());
     }
 
     #[test]
@@ -450,5 +485,37 @@ mod tests {
         assert_eq!(loaded.get(&ModelTier::Strong).unwrap(), "ollama/qwen3");
         assert_eq!(loaded.get(&ModelTier::Medium).unwrap(), "ollama/qwen3");
         assert_eq!(loaded.get(&ModelTier::Weak).unwrap(), "ollama/qwen3:8b");
+    }
+
+    #[test]
+    fn load_from_storage_migrates_legacy_opencode_zen_tier_overrides() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join(TIERS_FILE);
+        let legacy = r#"{"strong": "opencode-zen/nvidia/openai/gpt-oss-120b", "medium": "opencode-zen/opencode/claude-sonnet-4-5"}"#;
+        std::fs::write(&path, legacy).unwrap();
+
+        let state_dir = StateDir::from_path(tmp.path().to_path_buf());
+        load_from_storage(&state_dir);
+
+        let reg = model_registry().read().unwrap();
+        assert_eq!(
+            reg.overrides.get(&ModelTier::Strong),
+            Some(&"nvidia/openai/gpt-oss-120b".to_string())
+        );
+        assert_eq!(
+            reg.overrides.get(&ModelTier::Medium),
+            Some(&"opencode-zen/opencode/claude-sonnet-4-5".to_string())
+        );
+        drop(reg);
+
+        let loaded = read_overrides(&path);
+        assert_eq!(
+            loaded.get(&ModelTier::Strong),
+            Some(&"nvidia/openai/gpt-oss-120b".to_string())
+        );
+        assert_eq!(
+            loaded.get(&ModelTier::Medium),
+            Some(&"opencode-zen/opencode/claude-sonnet-4-5".to_string())
+        );
     }
 }

@@ -184,7 +184,7 @@ pub(super) fn resolve_provider_keys(
 }
 
 /// A single resolved model entry, shared by Zen and Go.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct Meta {
     pub provider_id: String,
     pub api_format: EndpointType,

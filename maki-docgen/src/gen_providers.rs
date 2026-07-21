@@ -1,7 +1,6 @@
 use maki_providers::model::{ModelEntry, ModelTier, models_for_provider};
-use maki_providers::provider::ProviderKind;
+use maki_providers::provider::{ProviderKind, BUILTIN_KINDS};
 use std::fmt::Write;
-use strum::IntoEnumIterator;
 
 const FRONT_MATTER: &str = r#"+++
 title = "Providers"
@@ -57,7 +56,7 @@ zai/glm-4.7
 If the model name is unique across providers, the prefix can be omitted."#;
 
 fn dynamic_providers_section() -> String {
-    let valid_values: Vec<String> = ProviderKind::iter().map(|k| format!("`{k}`")).collect();
+    let valid_values: Vec<String> = BUILTIN_KINDS.iter().map(|k| format!("`{k}`")).collect();
 
     format!(
         r#"## Dynamic Providers
@@ -118,16 +117,16 @@ fn format_context(entry: &ModelEntry) -> String {
 
 struct ProviderSection {
     kind: ProviderKind,
-    name: &'static str,
+    name: String,
     auth_line: String,
-    urls: Vec<&'static str>,
-    features: Option<&'static str>,
+    urls: Vec<String>,
+    features: Option<String>,
     entries: &'static [ModelEntry],
 }
 
-fn format_auth(kind: ProviderKind) -> String {
+fn format_auth(kind: &ProviderKind) -> String {
     let env = kind.api_key_env();
-    if kind == ProviderKind::Ollama {
+    if *kind == ProviderKind::Ollama {
         format!("`OLLAMA_HOST` for local/remote (e.g. `http://localhost:11434`), `{env}` for auth")
     } else {
         format!("`{env}`")
@@ -137,27 +136,27 @@ fn format_auth(kind: ProviderKind) -> String {
 fn build_sections() -> Vec<ProviderSection> {
     let mut sections = Vec::new();
 
-    for kind in ProviderKind::iter() {
+    for kind in BUILTIN_KINDS.iter() {
         match kind {
             ProviderKind::Zai => {
                 sections.push(ProviderSection {
                     kind: ProviderKind::Zai,
-                    name: "Z.AI",
+                    name: "Z.AI".to_string(),
                     auth_line: format!(
                         "{} (shared across both endpoints)",
-                        format_auth(ProviderKind::Zai)
+                        format_auth(&ProviderKind::Zai)
                     ),
                     urls: vec![
                         ProviderKind::Zai.base_url(),
-                        "https://api.z.ai/api/coding/paas/v4",
+                        "https://api.z.ai/api/coding/paas/v4".to_string(),
                     ],
                     features: ProviderKind::Zai.features(),
-                    entries: models_for_provider(ProviderKind::Zai),
+                    entries: models_for_provider(&ProviderKind::Zai),
                 });
             }
             ProviderKind::OpenAi => {
                 sections.push(ProviderSection {
-                    kind,
+                    kind: kind.clone(),
                     name: kind.display_name(),
                     auth_line: format!("{} (also supports OAuth device flow)", format_auth(kind)),
                     urls: vec![kind.base_url()],
@@ -167,7 +166,7 @@ fn build_sections() -> Vec<ProviderSection> {
             }
             ProviderKind::Copilot => {
                 sections.push(ProviderSection {
-                    kind,
+                    kind: kind.clone(),
                     name: kind.display_name(),
                     auth_line: format!(
                         "{} (or run `maki auth login copilot` to import a token from gh)",
@@ -180,7 +179,7 @@ fn build_sections() -> Vec<ProviderSection> {
             }
             _ => {
                 sections.push(ProviderSection {
-                    kind,
+                    kind: kind.clone(),
                     name: kind.display_name(),
                     auth_line: format_auth(kind),
                     urls: vec![kind.base_url()],
@@ -259,7 +258,7 @@ fn write_model_table(out: &mut String, entries: &[ModelEntry]) {
     }
 }
 
-fn no_catalog_note(kind: ProviderKind) -> &'static str {
+fn no_catalog_note(kind: &ProviderKind) -> &'static str {
     match kind {
         ProviderKind::Ollama => {
             "This provider talks the OpenAI-compatible `/v1` API, so it also works with \
@@ -293,14 +292,14 @@ fn write_section(out: &mut String, section: &ProviderSection) {
         }
     }
 
-    if let Some(features) = section.features {
+    if let Some(features) = &section.features {
         let _ = writeln!(out, "- **Features**: {features}");
     }
 
     let _ = writeln!(out);
 
     if section.entries.is_empty() {
-        let _ = writeln!(out, "{}", no_catalog_note(section.kind));
+        let _ = writeln!(out, "{}", no_catalog_note(&section.kind));
     } else {
         write_model_table(out, section.entries);
     }

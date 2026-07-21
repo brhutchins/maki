@@ -54,14 +54,14 @@ fn resolve_model_from_ctx(ctx: &AgentContext, tier: Option<&str>) -> Result<Mode
     ctx.model
         .dynamic_slug
         .is_none()
-        .then(|| map.spec_for_tier(ctx.model.provider, effective))
+        .then(|| map.spec_for_tier(&ctx.model.provider, effective))
         .flatten()
         .or_else(|| map.spec_for_tier_any(effective))
         .and_then(|s| Model::from_spec(&s).ok())
         .map(Ok)
         .unwrap_or_else(|| {
             Model::from_tier_dynamic(
-                ctx.model.provider,
+                ctx.model.provider.clone(),
                 effective,
                 ctx.model.dynamic_slug.as_deref(),
             )

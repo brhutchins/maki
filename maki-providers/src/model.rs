@@ -183,7 +183,7 @@ fn lookup_entry<'a>(
         .ok_or_else(|| ModelError::UnknownModel(model_id.to_string()))
 }
 
-pub fn models_for_provider(provider: ProviderKind) -> &'static [ModelEntry] {
+pub fn models_for_provider(provider: &ProviderKind) -> &'static [ModelEntry] {
     match provider {
         ProviderKind::Anthropic => anthropic::models(),
         ProviderKind::OpenAi => openai::models(),
@@ -199,6 +199,7 @@ pub fn models_for_provider(provider: ProviderKind) -> &'static [ModelEntry] {
         ProviderKind::OpenRouter => openrouter::models(),
         ProviderKind::OpencodeZen => &[],
         ProviderKind::OpencodeGo => &[],
+        ProviderKind::Catalog(_) => &[],
     }
 }
 
@@ -238,7 +239,7 @@ impl Model {
     /// caught up to yet), fall back to the provider defaults so it still resolves.
     fn from_base(provider: ProviderKind, model_id: &str, dynamic_slug: Option<&str>) -> Self {
         let normalized_id = provider.normalize_model_id(model_id);
-        let static_entry = lookup_entry(models_for_provider(provider), &normalized_id).ok();
+        let static_entry = lookup_entry(models_for_provider(&provider), &normalized_id).ok();
         let spec = match dynamic_slug {
             Some(slug) => format!("{slug}/{normalized_id}"),
             None => format!("{provider}/{normalized_id}"),
@@ -246,7 +247,7 @@ impl Model {
         let tier = crate::model_registry::model_registry()
             .read()
             .unwrap()
-            .tier_for(&spec, provider, static_entry.map(|e| e.tier));
+            .tier_for(&spec, &provider, static_entry.map(|e| e.tier));
         let (family, pricing, max_output_tokens, context_window) = match static_entry {
             Some(e) => (
                 e.family,
@@ -256,7 +257,7 @@ impl Model {
             ),
             None => {
                 let guard = crate::model_registry::model_registry().read().unwrap();
-                let discovered = guard.discovered(provider, &normalized_id);
+                let discovered = guard.discovered(&provider, &normalized_id);
                 (
                     provider.family(),
                     discovered
@@ -291,7 +292,7 @@ impl Model {
             .or_else(|| {
                 let guard = crate::model_registry::model_registry().read().unwrap();
                 guard
-                    .discovered(self.provider, &self.id)
+                    .discovered(&self.provider, &self.id)
                     .and_then(|d| d.supports_thinking)
             })
             .unwrap_or_else(|| self.provider.supports_thinking())
@@ -302,11 +303,11 @@ impl Model {
             .or_else(|| {
                 let guard = crate::model_registry::model_registry().read().unwrap();
                 guard
-                    .discovered(self.provider, &self.id)
+                    .discovered(&self.provider, &self.id)
                     .and_then(|d| d.supports_vision)
             })
             .or_else(|| {
-                lookup_entry(models_for_provider(self.provider), &self.id)
+                lookup_entry(models_for_provider(&self.provider), &self.id)
                     .ok()
                     .map(|e| e.vision)
             })
@@ -347,15 +348,15 @@ impl Model {
         if let Some(spec) = crate::model_registry::model_registry()
             .read()
             .unwrap()
-            .spec_for_tier(provider, tier)
+            .spec_for_tier(&provider, tier)
         {
             return Self::from_spec(&spec);
         }
-        let entries = models_for_provider(provider);
+        let entries = models_for_provider(&provider);
         let entry = entries
             .iter()
             .find(|e| e.default && e.tier == tier)
-            .ok_or(ModelError::NoDefault(provider, tier))?;
+            .ok_or(ModelError::NoDefault(provider.clone(), tier))?;
         let model_id = entry.prefixes[0];
         Self::from_spec(&format!("{provider}/{model_id}"))
     }
@@ -380,12 +381,25 @@ impl Model {
     }
 
     pub fn from_spec(spec: &str) -> Result<Self, ModelError> {
+        // Backward compat: old opencode-zen/{slug}/{model_id} for third-party
+        // providers. First-party Zen models keep the opencode-zen prefix and
+        // normalize through ProviderKind::OpencodeZen.
+        if let Some(rest) = spec.strip_prefix("opencode-zen/")
+            && let Some((maybe_slug, _)) = rest.split_once('/')
+            && maybe_slug != crate::providers::opencode::ZEN_CATALOG_KEY
+            && let Ok(m) = Self::from_spec(rest)
+        {
+            return Ok(m);
+        }
+
         let (provider_str, model_id) = spec.split_once('/').ok_or(ModelError::InvalidFormat)?;
 
+        // 1. Built-in ProviderKind
         if let Ok(provider) = ProviderKind::from_str(provider_str) {
             return Ok(Self::from_base(provider, model_id, None));
         }
 
+        // 2. Dynamic provider (script-based)
         if let Some(base) = dynamic::base_for_slug(provider_str) {
             if let Some(model) = dynamic::lookup_model(provider_str, model_id) {
                 return Ok(model);
@@ -393,10 +407,18 @@ impl Model {
             return Ok(Self::from_base(base, model_id, Some(provider_str)));
         }
 
+        // 3. Custom provider (providers.toml)
         if let Some(model) = super::providers::custom::lookup_model(provider_str, model_id) {
             return Ok(model);
         }
 
+        // 4. Catalog provider slug
+        if crate::providers::opencode::registry::contains(provider_str) {
+            let provider = ProviderKind::Catalog(Arc::from(provider_str));
+            return Ok(Self::from_base(provider, model_id, None));
+        }
+
+        // 5. Error
         Err(ModelError::UnsupportedProvider(provider_str.to_string()))
     }
 }
@@ -479,8 +501,7 @@ impl AddAssign for TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::ProviderKind;
-    use strum::IntoEnumIterator;
+    use crate::provider::{ProviderKind, BUILTIN_KINDS};
     use test_case::test_case;
 
     const TIERS: [ModelTier; 4] = [
@@ -575,7 +596,7 @@ mod tests {
 
     #[test]
     fn fast_pricing_is_always_a_premium() {
-        for provider in ProviderKind::iter() {
+        for provider in BUILTIN_KINDS.iter() {
             for entry in models_for_provider(provider) {
                 let Some(fast) = &entry.pricing.fast else {
                     continue;
@@ -592,7 +613,7 @@ mod tests {
 
     #[test]
     fn spec_roundtrip() {
-        for provider in ProviderKind::iter() {
+        for provider in BUILTIN_KINDS.iter().cloned() {
             if provider.accepts_arbitrary_models() {
                 continue;
             }
@@ -604,12 +625,29 @@ mod tests {
     }
 
     #[test]
-    fn opencode_from_spec_parses_four_levels() {
+    fn opencode_from_spec_migrates_third_party_to_catalog() {
+        use crate::providers::opencode::registry::{CatalogProviderInfo, replace};
+
+        let mut registry = std::collections::HashMap::new();
+        registry.insert(
+            "nvidia".to_string(),
+            CatalogProviderInfo {
+                display_name: "NVIDIA".into(),
+                env_keys: vec!["NVIDIA_API_KEY".into()],
+                base_url: Some("https://integrate.api.nvidia.com/v1".into()),
+                features: "NVIDIA models".into(),
+                models: vec![],
+            },
+        );
+        replace(registry);
+
         let spec = "opencode-zen/nvidia/openai/gpt-oss-120b";
         let model = Model::from_spec(spec).unwrap();
-        assert_eq!(model.provider, ProviderKind::OpencodeZen);
-        assert_eq!(model.id, "nvidia/openai/gpt-oss-120b");
-        assert_eq!(model.spec(), spec);
+        assert_eq!(model.provider, ProviderKind::Catalog(Arc::from("nvidia")));
+        assert_eq!(model.id, "openai/gpt-oss-120b");
+        assert_eq!(model.spec(), "nvidia/openai/gpt-oss-120b");
+
+        replace(std::collections::HashMap::new());
     }
 
     #[test]
@@ -665,21 +703,21 @@ mod tests {
 
     #[test]
     fn from_tier_covers_all_providers() {
-        for provider in ProviderKind::iter() {
-            if provider.accepts_arbitrary_models() {
+        for p in BUILTIN_KINDS.iter() {
+            if p.accepts_arbitrary_models() {
                 continue;
             }
             for &tier in &TIERS {
                 // DeepSeek has no Weak tier model
-                if provider == ProviderKind::DeepSeek && tier == ModelTier::Weak {
+                if *p == ProviderKind::DeepSeek && tier == ModelTier::Weak {
                     continue;
                 }
                 // Compaction is user-assigned only, not in static registry
                 if tier == ModelTier::Compaction {
                     continue;
                 }
-                let model = Model::from_tier(provider, tier).unwrap();
-                assert_eq!(model.provider, provider);
+                let model = Model::from_tier((*p).clone(), tier).unwrap();
+                assert_eq!(model.provider, *p);
                 assert_eq!(model.tier, tier);
                 let max_output = model.max_output_tokens.unwrap();
                 assert!(max_output > 0);
@@ -702,13 +740,13 @@ mod tests {
 
     #[test]
     fn exactly_one_default_per_provider_tier() {
-        for provider in ProviderKind::iter() {
+        for provider in BUILTIN_KINDS.iter() {
             if provider.accepts_arbitrary_models() {
                 continue;
             }
             let entries = models_for_provider(provider);
             for &tier in &TIERS {
-                if provider == ProviderKind::DeepSeek && tier == ModelTier::Weak {
+                if *provider == ProviderKind::DeepSeek && tier == ModelTier::Weak {
                     continue;
                 }
                 // Compaction is user-assigned only, not in static registry
@@ -744,7 +782,7 @@ mod tests {
     fn from_base_dynamic_unknown_model_uses_provider_fallbacks() {
         // Deliberately fake id so this stays valid when the model table changes.
         let base = ProviderKind::Anthropic;
-        let model = Model::from_base(base, "claude-nonexistent-99", Some("anthropic-oauth"));
+        let model = Model::from_base(base.clone(), "claude-nonexistent-99", Some("anthropic-oauth"));
         assert_eq!(model.provider, base);
         assert_eq!(model.id, "claude-nonexistent-99");
         assert_eq!(model.dynamic_slug.as_deref(), Some("anthropic-oauth"));
@@ -818,7 +856,7 @@ mod tests {
         {
             let mut reg = model_registry().write().unwrap();
             reg.set_known_models(
-                provider,
+                provider.clone(),
                 vec![ModelInfo {
                     id: model_id.to_string(),
                     context_window: Some(expected_window),
@@ -832,7 +870,7 @@ mod tests {
         }
 
         // from_base for this unknown model should pick up the discovered context_window
-        let model = Model::from_base(provider, model_id, None);
+        let model = Model::from_base(provider.clone(), model_id, None);
         assert_eq!(model.id, model_id);
         assert_eq!(model.context_window, expected_window);
         // max_output_tokens falls back to provider default since not discovered
