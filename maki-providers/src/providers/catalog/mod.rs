@@ -5,8 +5,8 @@
 //! `ProviderData` display facade. Backends (e.g. opencode) use these building
 //! blocks to construct and serve their specific catalog instances.
 
-pub(crate) mod data;
-pub(crate) mod request;
-pub mod registry;
 pub mod cat_provider;
+pub(crate) mod data;
 pub mod provider_data;
+pub mod registry;
+pub(crate) mod request;

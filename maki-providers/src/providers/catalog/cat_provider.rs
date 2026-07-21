@@ -73,8 +73,11 @@ impl Provider for CatalogProvider {
                 Some(m) => &m.meta,
                 None => {
                     return Err(AgentError::Config {
-                        message: format!("model '{}' not found in catalog provider '{}'", model.id, self.slug),
-                    })
+                        message: format!(
+                            "model '{}' not found in catalog provider '{}'",
+                            model.id, self.slug
+                        ),
+                    });
                 }
             };
             let auth = self.auth.lock().unwrap().clone();
@@ -179,7 +182,8 @@ mod tests {
         let auth = ResolvedAuth::bearer("token");
         assert!(auth.base_url.is_none());
 
-        let provider = CatalogProvider::new(Arc::from("neuralwatt"), info, auth, Timeouts::default());
+        let provider =
+            CatalogProvider::new(Arc::from("neuralwatt"), info, auth, Timeouts::default());
 
         assert_eq!(
             provider.auth.lock().unwrap().base_url.as_deref(),
@@ -193,7 +197,8 @@ mod tests {
         let mut auth = ResolvedAuth::bearer("token");
         auth.base_url = Some("https://override.example/v1".into());
 
-        let provider = CatalogProvider::new(Arc::from("neuralwatt"), info, auth, Timeouts::default());
+        let provider =
+            CatalogProvider::new(Arc::from("neuralwatt"), info, auth, Timeouts::default());
 
         assert_eq!(
             provider.auth.lock().unwrap().base_url.as_deref(),

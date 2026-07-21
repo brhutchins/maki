@@ -216,10 +216,7 @@ pub fn migrate_tier_overrides(state_dir: &StateDir) {
         }
     }
     if changed {
-        write_overrides(
-            state_dir.path().join(TIERS_FILE).as_path(),
-            &rewritten,
-        );
+        write_overrides(state_dir.path().join(TIERS_FILE).as_path(), &rewritten);
         guard.set_overrides(rewritten);
     }
     let _ = TIER_MIGRATION_DONE.set(());

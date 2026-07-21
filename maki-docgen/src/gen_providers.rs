@@ -1,5 +1,5 @@
 use maki_providers::model::{ModelEntry, ModelTier, models_for_provider};
-use maki_providers::provider::{ProviderKind, BUILTIN_KINDS};
+use maki_providers::provider::{BUILTIN_KINDS, ProviderKind};
 use std::fmt::Write;
 
 const FRONT_MATTER: &str = r#"+++

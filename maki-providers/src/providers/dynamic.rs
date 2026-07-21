@@ -124,7 +124,10 @@ fn is_valid_slug(s: &str) -> bool {
 }
 
 fn builtin_slugs() -> Vec<String> {
-    crate::provider::BUILTIN_KINDS.iter().map(|k| k.to_string()).collect()
+    crate::provider::BUILTIN_KINDS
+        .iter()
+        .map(|k| k.to_string())
+        .collect()
 }
 
 fn providers_dir() -> Option<PathBuf> {
@@ -428,7 +431,7 @@ pub fn create(slug: &str, timeouts: super::Timeouts) -> Result<Box<dyn Provider>
         ProviderKind::Catalog(_) => {
             return Err(AgentError::Config {
                 message: "catalog providers cannot be used as dynamic provider base".to_string(),
-            })
+            });
         }
     };
 
@@ -477,7 +480,12 @@ pub fn lookup_model(slug: &str, model_id: &str) -> Option<Model> {
         .iter()
         .filter(|m| model_id.starts_with(&m.id))
         .max_by_key(|m| m.id.len())?;
-    Some(script_model.to_model(slug, meta.base.clone(), model_id.to_string(), script_model.tier))
+    Some(script_model.to_model(
+        slug,
+        meta.base.clone(),
+        model_id.to_string(),
+        script_model.tier,
+    ))
 }
 
 pub fn find_model_for_tier(slug: &str, tier: ModelTier) -> Option<Model> {

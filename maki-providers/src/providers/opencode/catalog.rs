@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use maki_storage::StateDir;
 use tracing::debug;
 
-use crate::providers::catalog::data::{CatalogIndex, CatalogProvider, maki_slug_for, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG};
+use crate::providers::catalog::data::{
+    CatalogIndex, CatalogProvider, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG, maki_slug_for,
+};
 
 pub(super) const ALLOWED_NPM: &[&str] = &["@ai-sdk/openai-compatible", "@ai-sdk/anthropic"];
 

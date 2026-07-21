@@ -119,7 +119,8 @@ impl std::str::FromStr for ProviderKind {
 
 impl ProviderKind {
     pub fn from_slug(slug: &str) -> Self {
-        slug.parse().unwrap_or_else(|_| Self::Catalog(Arc::from(slug)))
+        slug.parse()
+            .unwrap_or_else(|_| Self::Catalog(Arc::from(slug)))
     }
 
     pub fn slug(&self) -> Option<&str> {
@@ -145,11 +146,9 @@ impl ProviderKind {
             Self::TensorX => "TensorX".to_string(),
             Self::OpencodeZen => "OpencodeZen".to_string(),
             Self::OpencodeGo => "OpencodeGo".to_string(),
-            Self::Catalog(slug) => {
-                crate::providers::catalog::registry::get(slug)
-                    .map(|info| info.display_name)
-                    .unwrap_or_else(|| slug.to_string())
-            }
+            Self::Catalog(slug) => crate::providers::catalog::registry::get(slug)
+                .map(|info| info.display_name)
+                .unwrap_or_else(|| slug.to_string()),
         }
     }
 
@@ -169,11 +168,9 @@ impl ProviderKind {
             Self::TensorX => "TENSORX_API_KEY".into(),
             Self::OpencodeZen => "OPENCODE_API_KEY".into(),
             Self::OpencodeGo => "OPENCODE_API_KEY".into(),
-            Self::Catalog(slug) => {
-                crate::providers::catalog::registry::get(slug)
-                    .map(|info| info.env_keys.join(","))
-                    .unwrap_or_default()
-            }
+            Self::Catalog(slug) => crate::providers::catalog::registry::get(slug)
+                .map(|info| info.env_keys.join(","))
+                .unwrap_or_default(),
         }
     }
 
@@ -182,7 +179,9 @@ impl ProviderKind {
             Self::Anthropic => "https://api.anthropic.com/v1/messages".into(),
             Self::OpenAi => "https://api.openai.com/v1".into(),
             Self::Google => "https://generativelanguage.googleapis.com/v1beta".into(),
-            Self::Copilot => "https://api.githubcopilot.com (or GraphQL-discovered Copilot API endpoint)".into(),
+            Self::Copilot => {
+                "https://api.githubcopilot.com (or GraphQL-discovered Copilot API endpoint)".into()
+            }
             Self::Ollama => "http://localhost:11434/v1".into(),
             Self::LlamaCpp => "http://localhost:8080/v1".into(),
             Self::Mistral => "https://api.mistral.ai/v1".into(),
@@ -193,11 +192,9 @@ impl ProviderKind {
             Self::TensorX => "https://api.tensorx.ai/v1".into(),
             Self::OpencodeZen => "https://opencode.ai/zen/v1".into(),
             Self::OpencodeGo => "https://opencode.ai/zen/go/v1".into(),
-            Self::Catalog(slug) => {
-                crate::providers::catalog::registry::get(slug)
-                    .and_then(|info| info.base_url)
-                    .unwrap_or_default()
-            }
+            Self::Catalog(slug) => crate::providers::catalog::registry::get(slug)
+                .and_then(|info| info.base_url)
+                .unwrap_or_default(),
         }
     }
 
@@ -351,14 +348,23 @@ impl ProviderKind {
             Self::OpencodeZen => Ok(Box::new(Opencode::zen(timeouts)?)),
             Self::OpencodeGo => Ok(Box::new(Opencode::go(timeouts)?)),
             Self::Catalog(slug) => {
-                let info = crate::providers::catalog::registry::get(slug)
-                    .ok_or_else(|| AgentError::Config {
+                let info = crate::providers::catalog::registry::get(slug).ok_or_else(|| {
+                    AgentError::Config {
                         message: format!("unknown catalog provider '{slug}'"),
-                    })?;
-                let auth = crate::providers::catalog::registry::resolve_auth_for_catalog(slug, &info.env_keys)?;
-                Ok(Box::new(crate::providers::catalog::cat_provider::CatalogProvider::new(
-                    Arc::clone(slug), info, auth, timeouts,
-                )))
+                    }
+                })?;
+                let auth = crate::providers::catalog::registry::resolve_auth_for_catalog(
+                    slug,
+                    &info.env_keys,
+                )?;
+                Ok(Box::new(
+                    crate::providers::catalog::cat_provider::CatalogProvider::new(
+                        Arc::clone(slug),
+                        info,
+                        auth,
+                        timeouts,
+                    ),
+                ))
             }
         }
     }
@@ -620,36 +626,36 @@ pub async fn fetch_all_models(
     // Spawn catalog provider fetches
     let config = maki_config::providers::ProvidersConfig::load();
     for slug in crate::providers::catalog::registry::all_slugs() {
-        if dynamic::display_name(&slug).is_some()
-            || config.get(&slug).is_some()
-        {
+        if dynamic::display_name(&slug).is_some() || config.get(&slug).is_some() {
             continue;
         }
         let slug = Arc::<str>::from(slug);
         let tx = tx.clone();
         smol::spawn(async move {
             match ProviderKind::Catalog(Arc::clone(&slug)).create(timeouts) {
-                Ok(provider) => {
-                    match provider.list_models().await {
-                        Ok(models) => {
-                            let specs: Vec<String> = models
-                                .iter()
-                                .map(|m| format!("{slug}/{}", m.id))
-                                .collect();
-                            crate::model_registry::model_registry()
-                                .write()
-                                .unwrap()
-                                .set_known_models(ProviderKind::Catalog(Arc::clone(&slug)), models);
-                            let _ = tx.send_async(ModelBatch { models: specs, warnings: vec![] }).await;
-                        }
-                        Err(e) => {
-                            warn!(slug = %slug, error = %e, "catalog provider list_models failed");
-                        }
+                Ok(provider) => match provider.list_models().await {
+                    Ok(models) => {
+                        let specs: Vec<String> =
+                            models.iter().map(|m| format!("{slug}/{}", m.id)).collect();
+                        crate::model_registry::model_registry()
+                            .write()
+                            .unwrap()
+                            .set_known_models(ProviderKind::Catalog(Arc::clone(&slug)), models);
+                        let _ = tx
+                            .send_async(ModelBatch {
+                                models: specs,
+                                warnings: vec![],
+                            })
+                            .await;
                     }
-                }
+                    Err(e) => {
+                        warn!(slug = %slug, error = %e, "catalog provider list_models failed");
+                    }
+                },
                 Err(_) => { /* no auth → skip */ }
             }
-        }).detach();
+        })
+        .detach();
     }
 
     for slug in dynamic::discovered_slugs() {
@@ -746,9 +752,18 @@ mod tests {
 
     #[test]
     fn from_slug_parses_builtin_or_creates_catalog() {
-        assert_eq!(ProviderKind::from_slug("anthropic"), ProviderKind::Anthropic);
-        assert_eq!(ProviderKind::from_slug("opencode-zen"), ProviderKind::OpencodeZen);
-        assert_eq!(ProviderKind::from_slug("nvidia"), ProviderKind::Catalog(Arc::from("nvidia")));
+        assert_eq!(
+            ProviderKind::from_slug("anthropic"),
+            ProviderKind::Anthropic
+        );
+        assert_eq!(
+            ProviderKind::from_slug("opencode-zen"),
+            ProviderKind::OpencodeZen
+        );
+        assert_eq!(
+            ProviderKind::from_slug("nvidia"),
+            ProviderKind::Catalog(Arc::from("nvidia"))
+        );
     }
 
     #[test]

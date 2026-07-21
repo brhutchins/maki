@@ -10,15 +10,17 @@ use std::sync::{Arc, Mutex};
 
 use tracing::debug;
 
-use crate::providers::catalog::data as cat_data;
-use crate::providers::catalog::data::{
-    CatalogIndex, CatalogProvider, EndpointType, Meta, ModelKey, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG,
-};
-use crate::providers::catalog::registry::{CatalogModelInfo, CatalogProviderInfo, self as cat_registry};
 use super::catalog::{ALLOWED_NPM, GO_PROVIDER_ID, PUBLIC_KEY};
 use crate::AgentError;
 use crate::model::{ModelInfo, ModelPricing};
 use crate::providers::ResolvedAuth;
+use crate::providers::catalog::data as cat_data;
+use crate::providers::catalog::data::{
+    CatalogIndex, CatalogProvider, EndpointType, Meta, ModelKey, ZEN_CATALOG_KEY, ZEN_MAKI_SLUG,
+};
+use crate::providers::catalog::registry::{
+    self as cat_registry, CatalogModelInfo, CatalogProviderInfo,
+};
 
 pub(crate) struct Catalog {
     pub entries: HashMap<ModelKey, Meta>,
@@ -406,7 +408,7 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
 
     if let Some(index) = cat_data::load_cached_async().await {
         debug!(backend = ?backend, "using cached catalog");
-            let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
+        let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
         let catalog = backend.build_catalog(index, &keys, enable_free_models);
         crate::model_registry::migrate_tier_overrides(&state_dir);
         return catalog;
@@ -420,7 +422,7 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
     match cat_data::fetch_remote_async(&client).await {
         Ok(index) => {
             cat_data::save_cached_async(&index).await;
-        let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
+            let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
             let catalog = backend.build_catalog(index, &keys, enable_free_models);
             crate::model_registry::migrate_tier_overrides(&state_dir);
             catalog

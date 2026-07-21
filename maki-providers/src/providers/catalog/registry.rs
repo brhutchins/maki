@@ -4,8 +4,8 @@ use std::sync::{OnceLock, RwLock};
 use tracing::debug;
 
 use super::data::Meta;
-use crate::providers::ResolvedAuth;
 use crate::AgentError;
+use crate::providers::ResolvedAuth;
 
 #[derive(Debug, Clone)]
 pub(crate) struct CatalogProviderInfo {

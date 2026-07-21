@@ -501,7 +501,7 @@ impl AddAssign for TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::{ProviderKind, BUILTIN_KINDS};
+    use crate::provider::{BUILTIN_KINDS, ProviderKind};
     use test_case::test_case;
 
     const TIERS: [ModelTier; 4] = [
@@ -782,7 +782,11 @@ mod tests {
     fn from_base_dynamic_unknown_model_uses_provider_fallbacks() {
         // Deliberately fake id so this stays valid when the model table changes.
         let base = ProviderKind::Anthropic;
-        let model = Model::from_base(base.clone(), "claude-nonexistent-99", Some("anthropic-oauth"));
+        let model = Model::from_base(
+            base.clone(),
+            "claude-nonexistent-99",
+            Some("anthropic-oauth"),
+        );
         assert_eq!(model.provider, base);
         assert_eq!(model.id, "claude-nonexistent-99");
         assert_eq!(model.dynamic_slug.as_deref(), Some("anthropic-oauth"));
