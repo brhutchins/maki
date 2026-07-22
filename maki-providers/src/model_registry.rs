@@ -24,8 +24,6 @@ use crate::provider::ProviderKind;
 const TIERS_FILE: &str = "model-tiers";
 
 static REGISTRY: OnceLock<RwLock<ModelRegistry>> = OnceLock::new();
-static TIER_MIGRATION_DONE: OnceLock<()> = OnceLock::new();
-
 pub fn model_registry() -> &'static RwLock<ModelRegistry> {
     REGISTRY.get_or_init(|| RwLock::new(ModelRegistry::default()))
 }
@@ -33,7 +31,6 @@ pub fn model_registry() -> &'static RwLock<ModelRegistry> {
 pub fn load_from_storage(dir: &StateDir) {
     let overrides = read_overrides(dir.path().join(TIERS_FILE).as_path());
     model_registry().write().unwrap().set_overrides(overrides);
-    migrate_tier_overrides(dir);
 }
 
 pub fn set_and_persist(spec: String, tier: ModelTier, dir: &StateDir) {
@@ -193,33 +190,6 @@ impl ModelRegistry {
             .collect();
         (!tiers.is_empty()).then(|| tiers.join("/"))
     }
-}
-
-/// Migrate old `opencode-zen/{slug}/{model_id}` tier override specs to the new
-/// `{slug}/{model_id}` format. First-party Zen specs (`opencode-zen/opencode/...`)
-/// are left untouched so they continue to resolve through `ProviderKind::OpencodeZen`.
-/// This does not require the catalog registry to be populated.
-pub fn migrate_tier_overrides(state_dir: &StateDir) {
-    if TIER_MIGRATION_DONE.get().is_some() {
-        return;
-    }
-    let mut guard = model_registry().write().unwrap();
-    let mut rewritten = guard.overrides.clone();
-    let mut changed = false;
-    for (tier, spec) in &guard.overrides {
-        if let Some(rest) = spec.strip_prefix("opencode-zen/")
-            && let Some((maybe_slug, _)) = rest.split_once('/')
-            && maybe_slug != crate::providers::catalog::data::ZEN_CATALOG_KEY
-        {
-            rewritten.insert(*tier, rest.to_string());
-            changed = true;
-        }
-    }
-    if changed {
-        write_overrides(state_dir.path().join(TIERS_FILE).as_path(), &rewritten);
-        guard.set_overrides(rewritten);
-    }
-    let _ = TIER_MIGRATION_DONE.set(());
 }
 
 fn tier_for_position(pos: usize) -> ModelTier {
@@ -485,7 +455,7 @@ mod tests {
     }
 
     #[test]
-    fn load_from_storage_migrates_legacy_opencode_zen_tier_overrides() {
+    fn load_from_storage_preserves_legacy_opencode_zen_tier_overrides() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join(TIERS_FILE);
         let legacy = r#"{"strong": "opencode-zen/nvidia/openai/gpt-oss-120b", "medium": "opencode-zen/opencode/claude-sonnet-4-5"}"#;
@@ -497,7 +467,7 @@ mod tests {
         let reg = model_registry().read().unwrap();
         assert_eq!(
             reg.overrides.get(&ModelTier::Strong),
-            Some(&"nvidia/openai/gpt-oss-120b".to_string())
+            Some(&"opencode-zen/nvidia/openai/gpt-oss-120b".to_string())
         );
         assert_eq!(
             reg.overrides.get(&ModelTier::Medium),
@@ -508,7 +478,7 @@ mod tests {
         let loaded = read_overrides(&path);
         assert_eq!(
             loaded.get(&ModelTier::Strong),
-            Some(&"nvidia/openai/gpt-oss-120b".to_string())
+            Some(&"opencode-zen/nvidia/openai/gpt-oss-120b".to_string())
         );
         assert_eq!(
             loaded.get(&ModelTier::Medium),

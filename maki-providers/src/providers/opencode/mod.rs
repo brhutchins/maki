@@ -48,6 +48,7 @@ mod catalog;
 mod request;
 
 pub(crate) use backend::Backend;
+pub(crate) use backend::catalog_models_to_info;
 
 inventory::submit!(maki_config::providers::BuiltInProvider {
     slug: "opencode-zen",
@@ -128,6 +129,18 @@ impl Opencode {
             .unwrap()
             .set_known_models(kind, backend.all_models(&catalog_guard));
         drop(catalog_guard);
+
+        // Eagerly seed third-party catalog providers so `available_model_specs`
+        // returns them immediately without waiting on `fetch_all_models`.
+        for slug in crate::providers::catalog::registry::all_slugs() {
+            if let Some(info) = crate::providers::catalog::registry::get(&slug) {
+                let catalog_kind = ProviderKind::Catalog(Arc::from(slug.as_str()));
+                model_registry()
+                    .write()
+                    .unwrap()
+                    .set_known_models(catalog_kind, backend::catalog_models_to_info(&info));
+            }
+        }
 
         let chat_compat = OpenAiCompatProvider::new(
             match backend {
@@ -264,8 +277,8 @@ pub(crate) fn catalog_provider_info(slug: &str) -> Option<registry::CatalogProvi
 
 /// Swap in a rebuilt catalog and re-seed the discovered registry so
 /// thinking/vision/pricing resolve from the fresh entries. The flag is
-/// cleared on completion so a later construction retries if the rebuild
-/// came back empty.
+/// cleared when the rebuild produced entries; on an empty catalog the flag
+/// is left set so subsequent constructions skip re-spawning this process.
 fn apply_rebuilt_catalog(backend: Backend, kind: ProviderKind, catalog: Catalog) {
     let entries = catalog.entries.len();
     {
@@ -276,7 +289,11 @@ fn apply_rebuilt_catalog(backend: Backend, kind: ProviderKind, catalog: Catalog)
             .unwrap()
             .set_known_models(kind, backend.all_models(&guard));
     }
-    rebuild_flag_for(backend).store(false, Ordering::Release);
+    if entries > 0 {
+        rebuild_flag_for(backend).store(false, Ordering::Release);
+    } else {
+        warn!(?backend, "opencode catalog rebuild came back empty, leaving rebuild flag set");
+    }
     warn!(?backend, entries, "opencode catalog rebuild complete");
 }
 
@@ -427,5 +444,25 @@ mod tests {
         assert_eq!(info.supports_thinking, Some(true));
 
         assert!(!rebuild_flag_for(Backend::Go).load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn apply_rebuilt_catalog_empty_catalog_preserves_rebuild_flag() {
+        let slot = catalog_for(Backend::Go);
+        slot.get_or_init(|| RwLock::new(Catalog::empty()));
+        *slot.get().unwrap().write().unwrap() = go_catalog_with_model();
+        rebuild_flag_for(Backend::Go).store(true, Ordering::Release);
+
+        apply_rebuilt_catalog(
+            Backend::Go,
+            ProviderKind::OpencodeGo,
+            Catalog::empty(),
+        );
+
+        assert!(slot.get().unwrap().read().unwrap().entries.is_empty());
+        assert!(
+            rebuild_flag_for(Backend::Go).load(Ordering::Acquire),
+            "empty catalog rebuild should not clear the rebuild flag"
+        );
     }
 }

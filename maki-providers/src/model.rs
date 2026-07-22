@@ -626,8 +626,9 @@ mod tests {
 
     #[test]
     fn opencode_from_spec_migrates_third_party_to_catalog() {
-        use crate::providers::catalog::registry::{CatalogProviderInfo, replace};
+        use crate::providers::catalog::registry::{CatalogProviderInfo, replace, clear};
 
+        clear();
         let mut registry = std::collections::HashMap::new();
         registry.insert(
             "nvidia".to_string(),
@@ -648,6 +649,21 @@ mod tests {
         assert_eq!(model.spec(), "nvidia/openai/gpt-oss-120b");
 
         replace(std::collections::HashMap::new());
+    }
+
+    #[test]
+    fn opencode_from_spec_falls_back_to_zen_when_registry_unpopulated() {
+        use crate::providers::catalog::registry::clear;
+
+        clear();
+        assert!(!crate::providers::catalog::registry::contains("nvidia"));
+
+        let model = Model::from_spec("opencode-zen/nvidia/openai/gpt-oss-120b")
+            .expect("legacy spec should fall back to OpencodeZen");
+
+        assert_eq!(model.provider, ProviderKind::OpencodeZen);
+        assert_eq!(model.id, "nvidia/openai/gpt-oss-120b");
+        assert!(model.dynamic_slug.is_none());
     }
 
     #[test]

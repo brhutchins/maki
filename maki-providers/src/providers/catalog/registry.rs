@@ -46,6 +46,11 @@ pub(crate) fn contains(slug: &str) -> bool {
     registry().read().unwrap().contains_key(slug)
 }
 
+#[cfg(test)]
+pub(crate) fn clear() {
+    registry().write().unwrap().clear();
+}
+
 pub(crate) fn resolve_auth_for_catalog(
     slug: &str,
     env_keys: &[String],

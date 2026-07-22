@@ -4,7 +4,6 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 
 use maki_providers::model::{Model, ModelTier};
-use maki_providers::model_registry;
 use maki_providers::provider::ProviderKind;
 use maki_storage::StateDir;
 use maki_storage::log::RotatingFileWriter;
@@ -25,8 +24,6 @@ pub fn resolve_model(
     provider_config: &maki_config::ProviderConfig,
     storage: &StateDir,
 ) -> Result<Model> {
-    model_registry::migrate_tier_overrides(storage);
-
     if let Some(spec) = explicit {
         let model = Model::from_spec(spec).context("invalid --model spec")?;
         return Ok(model);

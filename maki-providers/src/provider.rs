@@ -358,7 +358,7 @@ impl ProviderKind {
                     &info.env_keys,
                 )?;
                 Ok(Box::new(
-                    crate::providers::catalog::cat_provider::CatalogProvider::new(
+                    crate::providers::catalog::catalog_provider::CatalogProvider::new(
                         Arc::clone(slug),
                         info,
                         auth,
@@ -623,7 +623,9 @@ pub async fn fetch_all_models(
         .detach();
     }
 
-    // Spawn catalog provider fetches
+    // Spawn catalog provider fetches — seeds from the in-memory registry
+    // built by `Opencode::new_impl` (same data the eager seed writes, so the
+    // overwrite is a no-op under normal conditions).
     let config = maki_config::providers::ProvidersConfig::load();
     for slug in crate::providers::catalog::registry::all_slugs() {
         if dynamic::display_name(&slug).is_some() || config.get(&slug).is_some() {
@@ -632,27 +634,21 @@ pub async fn fetch_all_models(
         let slug = Arc::<str>::from(slug);
         let tx = tx.clone();
         smol::spawn(async move {
-            match ProviderKind::Catalog(Arc::clone(&slug)).create(timeouts) {
-                Ok(provider) => match provider.list_models().await {
-                    Ok(models) => {
-                        let specs: Vec<String> =
-                            models.iter().map(|m| format!("{slug}/{}", m.id)).collect();
-                        crate::model_registry::model_registry()
-                            .write()
-                            .unwrap()
-                            .set_known_models(ProviderKind::Catalog(Arc::clone(&slug)), models);
-                        let _ = tx
-                            .send_async(ModelBatch {
-                                models: specs,
-                                warnings: vec![],
-                            })
-                            .await;
-                    }
-                    Err(e) => {
-                        warn!(slug = %slug, error = %e, "catalog provider list_models failed");
-                    }
-                },
-                Err(_) => { /* no auth → skip */ }
+            if let Some(info) = crate::providers::catalog::registry::get(&slug) {
+                    let models =
+                    crate::providers::opencode::catalog_models_to_info(&info);
+                let specs: Vec<String> =
+                    models.iter().map(|m| format!("{slug}/{}", m.id)).collect();
+                crate::model_registry::model_registry()
+                    .write()
+                    .unwrap()
+                    .set_known_models(ProviderKind::Catalog(Arc::clone(&slug)), models);
+                let _ = tx
+                    .send_async(ModelBatch {
+                        models: specs,
+                        warnings: vec![],
+                    })
+                    .await;
             }
         })
         .detach();

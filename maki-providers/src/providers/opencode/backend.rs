@@ -187,6 +187,27 @@ impl Backend {
     }
 }
 
+pub(crate) fn catalog_models_to_info(info: &CatalogProviderInfo) -> Vec<ModelInfo> {
+    info.models
+        .iter()
+        .map(|m| ModelInfo {
+            id: m.id.clone(),
+            context_window: Some(m.meta.context),
+            max_output_tokens: Some(m.meta.output),
+            pricing: Some(ModelPricing {
+                input: m.meta.input_price,
+                output: m.meta.output_price,
+                cache_read: m.meta.cache_read,
+                cache_write: m.meta.cache_write,
+                fast: None,
+            }),
+            supports_thinking: Some(m.meta.supports_thinking),
+            supports_vision: Some(m.meta.vision),
+            provider_info: None,
+        })
+        .collect()
+}
+
 fn admit_provider(provider: &CatalogProvider) -> bool {
     if !ALLOWED_NPM.contains(&provider.npm.as_str()) {
         debug!(npm = %provider.npm, "skipping provider: unsupported npm package");
@@ -410,7 +431,6 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
         debug!(backend = ?backend, "using cached catalog");
         let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
         let catalog = backend.build_catalog(index, &keys, enable_free_models);
-        crate::model_registry::migrate_tier_overrides(&state_dir);
         return catalog;
     }
 
@@ -423,9 +443,7 @@ pub(super) async fn build_catalog_async(backend: Backend) -> Catalog {
         Ok(index) => {
             cat_data::save_cached_async(&index).await;
             let keys = super::catalog::resolve_provider_keys(&index, &state_dir);
-            let catalog = backend.build_catalog(index, &keys, enable_free_models);
-            crate::model_registry::migrate_tier_overrides(&state_dir);
-            catalog
+            backend.build_catalog(index, &keys, enable_free_models)
         }
         Err(e) => {
             warn_for(backend, &e);
