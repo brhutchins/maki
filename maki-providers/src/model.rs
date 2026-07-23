@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn opencode_from_spec_migrates_third_party_to_catalog() {
-        use crate::providers::catalog::registry::{CatalogProviderInfo, replace, clear};
+        use crate::providers::catalog::registry::{CatalogProviderInfo, clear, replace};
 
         clear();
         let mut registry = std::collections::HashMap::new();

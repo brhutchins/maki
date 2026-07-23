@@ -144,8 +144,8 @@ impl ProviderKind {
             Self::OpenRouter => "OpenRouter".to_string(),
             Self::Synthetic => "Synthetic".to_string(),
             Self::TensorX => "TensorX".to_string(),
-            Self::OpencodeZen => "OpencodeZen".to_string(),
-            Self::OpencodeGo => "OpencodeGo".to_string(),
+            Self::OpencodeZen => "Opencode Zen".to_string(),
+            Self::OpencodeGo => "Opencode Go".to_string(),
             Self::Catalog(slug) => crate::providers::catalog::registry::get(slug)
                 .map(|info| info.display_name)
                 .unwrap_or_else(|| slug.to_string()),
@@ -635,8 +635,7 @@ pub async fn fetch_all_models(
         let tx = tx.clone();
         smol::spawn(async move {
             if let Some(info) = crate::providers::catalog::registry::get(&slug) {
-                    let models =
-                    crate::providers::opencode::catalog_models_to_info(&info);
+                let models = crate::providers::opencode::catalog_models_to_info(&info);
                 let specs: Vec<String> =
                     models.iter().map(|m| format!("{slug}/{}", m.id)).collect();
                 crate::model_registry::model_registry()

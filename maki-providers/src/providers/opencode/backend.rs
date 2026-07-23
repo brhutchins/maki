@@ -220,6 +220,20 @@ fn admit_provider(provider: &CatalogProvider) -> bool {
     true
 }
 
+fn should_admit_zen_provider(provider_id: &str, provider: &CatalogProvider) -> bool {
+    if provider_id == GO_PROVIDER_ID {
+        return false;
+    }
+    if provider_id != ZEN_CATALOG_KEY
+        && (BLOCKED_PROVIDERS.contains(&provider_id)
+            || maki_config::providers::builtin_provider(provider_id).is_some())
+    {
+        debug!(provider = %provider_id, "skipping provider supported by a builtin provider");
+        return false;
+    }
+    admit_provider(provider)
+}
+
 fn model_is_free(model: &cat_data::CatalogModel) -> bool {
     let cost = model.cost.as_ref();
     cost.and_then(|c| c.input).unwrap_or(0.0) == 0.0
@@ -232,21 +246,10 @@ fn build_zen_catalog(
     enable_free_models: bool,
 ) -> Catalog {
     let mut catalog = Catalog::empty();
-    let registry = build_zen_registry(&index, enable_free_models);
+    let registry = build_zen_registry(&index, keys, enable_free_models);
 
     for (provider_id, provider) in &index {
-        // The Go provider has its own catalog; don't leak its models into Zen.
-        if provider_id == GO_PROVIDER_ID {
-            continue;
-        }
-        if provider_id != ZEN_CATALOG_KEY
-            && (BLOCKED_PROVIDERS.contains(&provider_id.as_str())
-                || maki_config::providers::builtin_provider(provider_id).is_some())
-        {
-            debug!(provider = %provider_id, "skipping provider supported by a builtin provider");
-            continue;
-        }
-        if !admit_provider(provider) {
+        if !should_admit_zen_provider(provider_id, provider) {
             continue;
         }
         catalog
@@ -278,7 +281,7 @@ fn build_zen_catalog(
                 continue;
             }
             // Paid models in the opencode catalog require a real key.
-            if !(has_key || is_opencode && is_free) {
+            if !(has_key || (is_opencode && is_free)) {
                 continue;
             }
             let meta = cat_data::model_meta(model_data, provider_id, api_format);
@@ -306,24 +309,22 @@ fn build_zen_catalog(
 
 fn build_zen_registry(
     index: &CatalogIndex,
+    keys: &HashMap<String, Option<String>>,
     enable_free_models: bool,
 ) -> HashMap<String, CatalogProviderInfo> {
     let mut registry = HashMap::new();
 
     for (provider_id, provider) in index {
-        if provider_id == GO_PROVIDER_ID {
-            continue;
-        }
-        if provider_id != ZEN_CATALOG_KEY
-            && (BLOCKED_PROVIDERS.contains(&provider_id.as_str())
-                || maki_config::providers::builtin_provider(provider_id).is_some())
-        {
-            continue;
-        }
-        if !admit_provider(provider) {
+        if !should_admit_zen_provider(provider_id, provider) {
             continue;
         }
         if provider_id == ZEN_CATALOG_KEY {
+            continue;
+        }
+
+        let key = keys.get(provider_id).and_then(|k| k.as_ref());
+        let has_key = key.is_some();
+        if !has_key {
             continue;
         }
 
@@ -398,9 +399,11 @@ fn build_go_catalog(index: CatalogIndex, keys: &HashMap<String, Option<String>>)
         count += 1;
     }
     catalog.auths.insert(GO_PROVIDER_ID.to_string(), auth);
-    catalog
-        .anthropic_auths
-        .insert(GO_PROVIDER_ID.to_string(), anthropic_auth);
+    if api_format == EndpointType::Messages {
+        catalog
+            .anthropic_auths
+            .insert(GO_PROVIDER_ID.to_string(), anthropic_auth);
+    }
     debug!(
         provider = GO_PROVIDER_ID,
         models = count,
@@ -467,7 +470,6 @@ mod tests {
     use crate::providers::catalog::data::{
         CatalogCost, CatalogLimits, CatalogModel, CatalogProvider,
     };
-    use crate::providers::opencode::catalog::PUBLIC_KEY;
     use test_case::test_case;
 
     fn provider_with_models(

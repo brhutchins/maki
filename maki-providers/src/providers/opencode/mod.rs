@@ -24,7 +24,7 @@ use std::time::Duration;
 use flume::Sender;
 use isahc::HttpClient;
 use serde_json::Value;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::providers::catalog::data::{EndpointType, maki_slug_for};
 pub use crate::providers::catalog::provider_data::ProviderData;
@@ -292,9 +292,12 @@ fn apply_rebuilt_catalog(backend: Backend, kind: ProviderKind, catalog: Catalog)
     if entries > 0 {
         rebuild_flag_for(backend).store(false, Ordering::Release);
     } else {
-        warn!(?backend, "opencode catalog rebuild came back empty, leaving rebuild flag set");
+        warn!(
+            ?backend,
+            "opencode catalog rebuild came back empty, leaving rebuild flag set"
+        );
     }
-    warn!(?backend, entries, "opencode catalog rebuild complete");
+    info!(?backend, entries, "opencode catalog rebuild complete");
 }
 
 impl Provider for Opencode {
@@ -453,11 +456,7 @@ mod tests {
         *slot.get().unwrap().write().unwrap() = go_catalog_with_model();
         rebuild_flag_for(Backend::Go).store(true, Ordering::Release);
 
-        apply_rebuilt_catalog(
-            Backend::Go,
-            ProviderKind::OpencodeGo,
-            Catalog::empty(),
-        );
+        apply_rebuilt_catalog(Backend::Go, ProviderKind::OpencodeGo, Catalog::empty());
 
         assert!(slot.get().unwrap().read().unwrap().entries.is_empty());
         assert!(
